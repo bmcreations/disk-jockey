@@ -25,7 +25,7 @@ if is_mac; then
   case "$RD_DIR" in
     "$HOME"/Documents/* | "$HOME"/Desktop/* | "$HOME"/Downloads/* | "$HOME/Library/Mobile Documents"/*)
       log "Warning: launchd jobs cannot read scripts in Documents/Desktop/Downloads/iCloud without Full Disk Access."
-      log "Move the skill (e.g. ~/.claude/skills/disk-jockey) before installing."
+      log "Move the skill (e.g. ~/.agents/skills/disk-jockey) before installing."
       ;;
   esac
   plist="$HOME/Library/LaunchAgents/$label.plist"

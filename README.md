@@ -5,7 +5,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/macOS%20%7C%20Linux%20%7C%20Windows-111?style=flat-square" alt="macOS, Linux and Windows">
   <img src="https://img.shields.io/badge/bash-3.2%2B-4EAA25?style=flat-square&logo=gnubash&logoColor=white" alt="bash 3.2+">
-  <img src="https://img.shields.io/badge/Claude-skill-D97757?style=flat-square" alt="Claude skill">
+  <img src="https://img.shields.io/badge/skill-Claude%20Code%20%7C%20Codex%20%7C%20Cursor-D97757?style=flat-square" alt="Agent skill for Claude Code, Codex and Cursor">
   <a href="https://github.com/bmcreations/disk-jockey/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/bmcreations/disk-jockey/ci.yml?branch=main&style=flat-square&label=tests" alt="CI status"></a>
   <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="MIT license">
 </p>
@@ -32,19 +32,22 @@ A generic "clear your caches" script finds none of that. disk-jockey checks for 
 ## Quick start
 
 ```bash
-git clone https://github.com/bmcreations/disk-jockey ~/.claude/skills/disk-jockey
+git clone https://github.com/bmcreations/disk-jockey ~/.agents/skills/disk-jockey
+mkdir -p ~/.claude/skills && ln -s ~/.agents/skills/disk-jockey ~/.claude/skills/disk-jockey
 ```
+
+One copy, every agent: Codex and Cursor read `~/.agents/skills`, Claude Code reads `~/.claude/skills` through the symlink. Using only Codex or Cursor? Skip the second line. Update with `git -C ~/.agents/skills/disk-jockey pull`. On Windows, Git Bash's `ln -s` copies the folder unless Developer Mode is on and `MSYS=winsymlinks:nativestrict` is set. A copy works but needs its own `git pull`.
 
 Then tell your agent *"my disk is full"*, or drive it yourself:
 
 ```bash
-~/.claude/skills/disk-jockey/scripts/dj.sh
+~/.agents/skills/disk-jockey/scripts/dj.sh
 ```
 
 `dj.sh` walks you through four steps: preflight fixes, pick categories, review worktrees, apply. Prefer individual commands?
 
 ```bash
-cd ~/.claude/skills/disk-jockey
+cd ~/.agents/skills/disk-jockey
 scripts/preflight.sh          # memory, swap and snapshots, before touching files
 scripts/scan.sh               # where the space is, by tier
 scripts/worktrees.sh ~/dev    # stale agent worktrees
@@ -109,7 +112,7 @@ Warn agents before heavy work. In `~/.claude/settings.json`:
 {
   "hooks": {
     "SessionStart": [
-      { "hooks": [ { "type": "command", "command": "~/.claude/skills/disk-jockey/scripts/disk-guard.sh 20G" } ] }
+      { "hooks": [ { "type": "command", "command": "~/.agents/skills/disk-jockey/scripts/disk-guard.sh 20G" } ] }
     ]
   }
 }

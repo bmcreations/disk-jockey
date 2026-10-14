@@ -172,6 +172,7 @@ $HOME/Library/MobileDevice
 $HOME/.claude/settings.json
 $HOME/.claude/CLAUDE.md
 $HOME/.claude/skills
+$HOME/.agents/skills
 $HOME/Documents
 $HOME/Desktop
 EOF

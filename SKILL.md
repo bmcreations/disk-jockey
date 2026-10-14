@@ -18,11 +18,11 @@ All scripts are in `scripts/`, read-only by default, and need only bash 3.2+ (st
 - **Tier 3 is never deleted by you.** Show the size and give the user the command.
 - **Never hand-roll `rm -rf`** for something the scripts don't cover. Add a line to `targets.conf` instead so it gets the guards: protected paths, symlink refusal, busy-process skip.
 - **Never `git worktree remove --force` or delete branches** unless the user names the worktree or branch and accepts losing its uncommitted changes.
-- Protected regardless of config: `~/.android/debug.keystore`, `~/.gradle/gradle.properties` (signing secrets), `~/.ssh`, `~/.gnupg`, Keychains, provisioning profiles, agent settings and skills. Directories containing them are protected too.
+- Protected regardless of config: `~/.android/debug.keystore`, `~/.gradle/gradle.properties` (signing secrets), `~/.ssh`, `~/.gnupg`, Keychains, provisioning profiles, agent settings and skills (`~/.claude/skills`, `~/.agents/skills`). Directories containing them are protected too.
 
 ## Interactive mode is for humans
 
-`scripts/dj.sh` is a guided, colorful version of this whole workflow for a person at a terminal. It refuses to run without one. When the user wants to drive cleanup themselves, tell them to run `~/.claude/skills/disk-jockey/scripts/dj.sh` in their own terminal. As an agent, use the individual scripts below; their output is plain text when piped.
+`scripts/dj.sh` is a guided, colorful version of this whole workflow for a person at a terminal. It refuses to run without one. When the user wants to drive cleanup themselves, tell them to run `scripts/dj.sh` from this skill's folder (usually `~/.agents/skills/disk-jockey`) in their own terminal. As an agent, use the individual scripts below; their output is plain text when piped.
 
 ## Workflow
 
@@ -102,7 +102,7 @@ Compare free space before and after. If much less was freed than expected on mac
 - **No way to see process working directories** (no `/proc`, `lsof` missing or failing): `worktrees.sh --apply` and `sweep.sh --apply` exit with code 3 instead of guessing. Tell the user to install `lsof`; only set `RD_SKIP_INUSE_CHECK=1` if they explicitly accept that a running agent's worktree could be deleted.
 - **Windows:** run everything in Git Bash, not PowerShell or cmd. Native programs' working folders aren't visible to `/proc`, so `--apply` test-renames each folder first and skips it if Windows says it's in use (expect a few false "in use" skips while antivirus scans; they're safe). WSL and Docker Desktop `.vhdx` disks only shrink when compacted: tell the user to prune inside them first, then follow the advice in scan's note. Pagefile, hibernation file, restore points and Windows Update cleanup need an admin terminal: give the user the command, don't try to elevate.
 - **Running in a VM with a mounted home** (some agent sandboxes): worktree `.git` files hold host paths, so git fails there, and mounts make `du` very slow. Run these scripts natively on the host.
-- **Scheduled runs can't see `~/Documents`, `~/Desktop` or iCloud folders** on macOS without Full Disk Access. Install the skill elsewhere, e.g. `~/.claude/skills/disk-jockey`.
+- **Scheduled runs can't see `~/Documents`, `~/Desktop` or iCloud folders** on macOS without Full Disk Access. Install the skill elsewhere, e.g. `~/.agents/skills/disk-jockey`.
 
 ## Extending
 
