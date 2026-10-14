@@ -66,6 +66,20 @@ blob app/build 300000; blob .gradle 100000
 find "$R" -exec touch -t "$(ago 30)" {} + 2>/dev/null
 cd "$T" || exit 1
 
+echo "== code health"
+# Every helper a script calls (snake_case names) must be defined in it or lib.sh. shellcheck can't see this.
+undefined=$(cd "$S" && for f in *.sh; do
+  defined=$(cat lib.sh "$f" | sed -n 's/^[[:space:]]*\([a-z][a-z0-9]*_[a-z0-9_]*\)() *{.*/\1/p' | sort -u)
+  # snake_case words in command position: line start, after ; | & ( $( && ||, or after "if/while/until/!".
+  sed 's/#.*$//' "$f" | grep -oE '(^|[;|&(]|\$\(|\bif|\bwhile|\buntil|!)[[:space:]]*[a-z][a-z0-9]*_[a-z0-9_]*([[:space:]]|$|\))' |
+    grep -oE '[a-z][a-z0-9]*_[a-z0-9_]*' | sort -u | while IFS= read -r fn; do
+      # Variables ($((x_kb + ..)), x_kb=) and find -name arguments aren't calls.
+      grep -qE "(^|[^a-z0-9_])$fn=|-name $fn" "$f" && continue
+      printf '%s\n' "$defined" | grep -qx "$fn" || command -v "$fn" >/dev/null 2>&1 || echo "$f:$fn"
+    done
+done)
+ok "no undefined helper functions" '[ -z "$undefined" ]' "$undefined"
+
 echo "== clean.sh"
 out=$(bash "$S/clean.sh" --tier 2 --skip docker-build-cache,docker-dangling,pip-cache,npm-cache,pnpm-store,yarn-cache,uv-cache,go-build-cache,go-mod-cache,brew-cleanup 2>&1)
 ok "dry run deletes nothing" '[ -d "$HOME/.gradle/caches/build-cache-1" ]'

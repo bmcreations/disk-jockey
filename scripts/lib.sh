@@ -192,12 +192,14 @@ safe_to_delete() {
 }
 
 # Windows has no pgrep: one PowerShell call lists "PID Name CommandLine", cached for the run.
+# Built before any matching, and our own helpers are dropped, so the search never sees itself.
 win_procs() {
   local f="$RD_TMP/procs.$$"
   if [ ! -s "$f" ]; then
     powershell.exe -NoProfile -NonInteractive -Command \
       'Get-CimInstance Win32_Process | ForEach-Object { "{0} {1} {2}" -f $_.ProcessId, $_.Name, $_.CommandLine }' \
-      2>/dev/null | tr -d '\r' >"$f"
+      2>/dev/null | tr -d '\r' |
+      grep -Ev '^[0-9]+ (grep|powershell|awk|sed|head|tr|cat)\.exe ' >"$f"
   fi
   cat "$f"
 }
@@ -220,27 +222,32 @@ win_fact() { # key
   sed -n "s/^$1=//p" "$f" | head -n 1
 }
 
+# Split a comma-separated pattern list into lines.
+patterns() { printf '%s\n' "$1" | tr ',' '\n' | sed '/^$/d'; }
+
 # 0 if a process matches any of the comma-separated pgrep -f patterns.
+# Sets RD_BUSY_BY to "PID name" of the first match, for messages.
 is_busy() {
-  [ -n "$1" ] && [ "$1" != "-" ] || return 1
-  local IFS=',' pat pid
   RD_BUSY_BY=""
+  [ -n "$1" ] && [ "$1" != "-" ] || return 1
+  local pat pid
   if is_win; then
-    for pat in $1; do
-      RD_BUSY_BY=$(win_procs | grep -E -- "$pat" | head -n 1 | awk '{print $1" "$2}')
+    win_procs >/dev/null
+    while IFS= read -r pat; do
+      RD_BUSY_BY=$(grep -E -- "$pat" "$RD_TMP/procs.$$" | head -n 1 | awk '{print $1" "$2}')
       [ -n "$RD_BUSY_BY" ] && return 0
-    done
+    done < <(patterns "$1")
     return 1
   fi
   [ -n "${RD_ANCESTORS:-}" ] || RD_ANCESTORS=" $(rd_ancestors) "
-  for pat in $1; do
+  while IFS= read -r pat; do
     for pid in $(pgrep -f -- "$pat" 2>/dev/null); do
       # Ignore this script and the shell/agent that launched it (their command lines may contain the pattern).
       case "$RD_ANCESTORS" in *" $pid "*) continue ;; esac
-      RD_BUSY_BY="$pid $(ps -o comm= -p "$pid" 2>/dev/null | sed 's#.*/##')"
+      RD_BUSY_BY="$pid $(ps -o comm= -p "$pid" 2>/dev/null | head -n 1 | sed 's#.*/##')"
       return 0
     done
-  done
+  done < <(patterns "$1")
   return 1
 }
 
@@ -248,7 +255,8 @@ is_busy() {
 count_procs() {
   local pid n=0
   if is_win; then
-    win_procs | grep -Ec -- "$1"
+    win_procs >/dev/null
+    grep -Ec -- "$1" "$RD_TMP/procs.$$"
     return 0
   fi
   [ -n "${RD_ANCESTORS:-}" ] || RD_ANCESTORS=" $(rd_ancestors) "
