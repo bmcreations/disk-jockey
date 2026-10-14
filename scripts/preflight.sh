@@ -99,7 +99,8 @@ fi
 
 # --- Uptime: swap and temp only fully clear on reboot
 if is_mac; then
-  boot=$(sysctl -n kern.boottime 2>/dev/null | sed -n 's/.*sec = \([0-9]*\).*/\1/p')
+  # Format: { sec = 1791990000, usec = 123 } ... ; anchor on "{ sec" so usec isn't matched.
+  boot=$(sysctl -n kern.boottime 2>/dev/null | sed -n 's/^{ *sec = \([0-9]*\),.*/\1/p')
 else
   boot=$(($(date +%s) - $(awk '{printf "%d", $1}' /proc/uptime 2>/dev/null)))
 fi
