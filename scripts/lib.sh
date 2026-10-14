@@ -10,7 +10,8 @@ is_mac() { [ "$RD_OS" = "Darwin" ]; }
 # Colors: on for an interactive terminal only, so agents reading through a pipe get plain text.
 # NO_COLOR=1 turns them off, FORCE_COLOR=1 forces them on. Truecolor when the terminal advertises it.
 C_0='' C_B='' C_DIM='' C_G='' C_Y='' C_R='' C_C='' C_M='' C_P=''
-if { [ -t 1 ] || [ -n "${FORCE_COLOR:-}" ]; } && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-}" != dumb ]; then
+# Order: NO_COLOR wins, then FORCE_COLOR (even on TERM=dumb), then an interactive non-dumb terminal.
+if [ -z "${NO_COLOR:-}" ] && { [ -n "${FORCE_COLOR:-}" ] || { [ -t 1 ] && [ "${TERM:-}" != dumb ]; }; }; then
   _e=$'\033['
   C_0="${_e}0m" C_B="${_e}1m"
   case "${COLORTERM:-}" in

@@ -137,6 +137,7 @@ echo "== colors"
 esc=$(printf '\033[')
 ok "plain text when piped" '! bash "$S/preflight.sh" | grep -qF "$esc"'
 ok "FORCE_COLOR adds color" 'FORCE_COLOR=1 bash "$S/preflight.sh" | grep -qF "$esc"'
+ok "FORCE_COLOR works with TERM=dumb" 'TERM=dumb FORCE_COLOR=1 bash "$S/preflight.sh" | grep -qF "$esc"'
 ok "NO_COLOR wins over FORCE_COLOR" '! NO_COLOR=1 FORCE_COLOR=1 bash "$S/preflight.sh" | grep -qF "$esc"'
 strip_ansi() { sed "s/$(printf '\033')\[[0-9;]*m//g"; }
 ok "columns stay aligned with color" '[ "$(FORCE_COLOR=1 bash "$S/preflight.sh" | strip_ansi | head -1)" = "$(bash "$S/preflight.sh" | head -1)" ]'
