@@ -17,7 +17,10 @@ ok() {
   else
     fail=$((fail + 1)); echo "  FAIL  $1"
     # Surface failures as annotations in GitHub Actions.
-    [ -n "${GITHUB_ACTIONS:-}" ] && echo "::error title=test failed::$1"
+    if [ -n "${GITHUB_ACTIONS:-}" ]; then
+      # Annotations are one line: join the debug output with " | ".
+      echo "::error title=test failed::$1${3:+ :: $(printf '%s' "$3" | tr '\n' '|' | cut -c1-900)}"
+    fi
   fi
 }
 blob() { mkdir -p "$1"; head -c "${2:-200000}" /dev/zero >"$1/blob"; }
@@ -25,7 +28,7 @@ blob() { mkdir -p "$1"; head -c "${2:-200000}" /dev/zero >"$1/blob"; }
 ago() { date -d "$1 days ago" +%Y%m%d%H%M 2>/dev/null || date -v-"$1"d +%Y%m%d%H%M; }
 backdate() { # days path...  (sets mtime/atime on each path, not following symlinks)
   local t; t=$(ago "$1"); shift
-  touch -h -t "$t" "$@" 2>/dev/null
+  touch -t "$t" "$@" 2>/dev/null
 }
 is_windows_host() { case "$(uname -s)" in MINGW* | MSYS* | CYGWIN*) return 0 ;; esac; return 1; }
 is_linux_host() { [ "$(uname -s)" = Linux ]; }
@@ -35,7 +38,7 @@ g() { git -c init.defaultBranch=main "$@" >/dev/null 2>&1; }
 
 echo "== fixtures"
 blob "$HOME/.gradle/caches/build-cache-1"
-blob "$HOME/.gradle/caches/7.6/x"; find "$HOME/.gradle/caches/7.6" -exec touch -h -t "$(ago 60)" {} +
+blob "$HOME/.gradle/caches/7.6/x"; find "$HOME/.gradle/caches/7.6" -exec touch -t "$(ago 60)" {} +
 blob "$HOME/.gradle/caches/9.7.1/x"
 echo "signing.password=secret" >"$HOME/.gradle/gradle.properties"
 blob "$HOME/.android/cache"; head -c 2000 /dev/zero >"$HOME/.android/debug.keystore"
@@ -60,7 +63,7 @@ g worktree add $W/unpushed -b agent/unpushed; (cd $W/unpushed && echo z >z && g 
 g worktree add "$R/gone" -b agent/gone; rm -rf "$R/gone"
 for w in "done" dirty unpushed; do blob "$W/$w/app/build" 300000; done
 blob app/build 300000; blob .gradle 100000
-find "$R" -exec touch -h -t "$(ago 30)" {} + 2>/dev/null
+find "$R" -exec touch -t "$(ago 30)" {} + 2>/dev/null
 cd "$T" || exit 1
 
 echo "== clean.sh"
@@ -72,9 +75,9 @@ ok "dry run lists stale gradle 7.6" 'echo "$out2" | grep -q "caches/7.6"'
 ok "recent gradle 9.7.1 not listed" '! echo "$out" | grep -q "caches/9.7.1"'
 [ "$has_symlinks" = 1 ] && ok "symlinked cache guarded" 'echo "$out" | grep -q "guard .*bun/install/cache"'
 ok "freshly extracted browser not stale" '! echo "$out" | grep -q chromium-new'
-bash "$S/clean.sh" --apply --skip docker-build-cache,pip-cache,npm-cache,pnpm-store,yarn-cache,uv-cache,go-build-cache,brew-cleanup >/dev/null 2>&1
+applied=$(bash "$S/clean.sh" --apply --skip docker-build-cache,pip-cache,npm-cache,pnpm-store,yarn-cache,uv-cache,go-build-cache,brew-cleanup 2>&1)
 ok "tier 1 apply removed build cache" '[ ! -e "$HOME/.gradle/caches/build-cache-1" ]'
-ok "tier 1 apply removed AVD snapshots" '[ ! -e "$HOME/.android/avd/Pixel.avd/snapshots" ]'
+ok "tier 1 apply removed AVD snapshots" '[ ! -e "$HOME/.android/avd/Pixel.avd/snapshots" ]' "$(echo "$applied" | grep -i 'avd\|skip\|fail')"
 ok "AVD data kept" '[ -e "$HOME/.android/avd/Pixel.avd/data" ]'
 ok "debug.keystore kept" '[ -f "$HOME/.android/debug.keystore" ]'
 ok "gradle.properties kept" '[ -f "$HOME/.gradle/gradle.properties" ]'
@@ -107,7 +110,7 @@ ok "apply kept unpushed" '[ -f "$R/app/$W/unpushed/z" ]'
 ok "apply pruned stale ref" '! git -C "$R/app" worktree list | grep -q gone'
 
 echo "== sweep.sh"
-find "$R" -exec touch -h -t "$(ago 30)" {} + 2>/dev/null
+find "$R" -exec touch -t "$(ago 30)" {} + 2>/dev/null
 bash "$S/sweep.sh" --apply "$R" >/dev/null 2>&1
 ok "main repo build/ removed" '[ ! -e "$R/app/app/build" ]'
 ok "main repo .gradle removed" '[ ! -e "$R/app/.gradle" ]'
@@ -142,13 +145,14 @@ if is_windows_host; then
   mkdir -p "$HOME/AppData/Local/CrashDumps"
   echo dump >"$HOME/AppData/Local/CrashDumps/app.old.dmp"; backdate 30 "$HOME/AppData/Local/CrashDumps/app.old.dmp"
   echo dump >"$HOME/AppData/Local/CrashDumps/app.new.dmp"
-  bash "$S/clean.sh" --apply --only win-crashdumps >/dev/null 2>&1
+  # Windows sets ctime at creation and it can't be backdated, so judge test files by mtime.
+  RD_IGNORE_CTIME=1 bash "$S/clean.sh" --apply --only win-crashdumps >/dev/null 2>&1
   ok "%LOCALAPPDATA% target: old crash dump removed" '[ ! -e "$HOME/AppData/Local/CrashDumps/app.old.dmp" ]'
   ok "%LOCALAPPDATA% target: recent crash dump kept" '[ -e "$HOME/AppData/Local/CrashDumps/app.new.dmp" ]'
   ok "git paths normalized (no C:/ in audit)" '! bash "$S/worktrees.sh" "$R" 2>/dev/null | grep -q "[A-Za-z]:/"'
   # A native program (cmd.exe) working inside a worktree: invisible to /proc, caught by the rename probe.
   (cd "$R/app" && g worktree add .claude/worktrees/native -b agent/native)
-  find "$R/app/.claude/worktrees/native" -exec touch -h -t "$(ago 30)" {} + 2>/dev/null
+  find "$R/app/.claude/worktrees/native" -exec touch -t "$(ago 30)" {} + 2>/dev/null
   MSYS_NO_PATHCONV=1 cmd.exe /c "cd /d $(cygpath -w "$R/app/.claude/worktrees/native") && ping -n 25 127.0.0.1 >nul" &
   sleep 3
   out=$(bash "$S/worktrees.sh" --apply "$R" 2>&1)
@@ -172,7 +176,7 @@ blob "$HOME/.gradle/caches/build-cache-1"
 blob "$HOME/.gradle/caches/modules-2"
 (cd "$R/app" && g worktree add .claude/worktrees/dj -b agent/dj)
 blob "$R/app/app/build"   # ensures the sweep prompt appears, so the scripted answers stay in order
-find "$R" -exec touch -h -t "$(ago 30)" {} + 2>/dev/null
+find "$R" -exec touch -t "$(ago 30)" {} + 2>/dev/null
 ok "refuses to run without a terminal" '! bash "$S/dj.sh" </dev/null >/dev/null 2>&1'
 printf 'q\n' | RD_ALLOW_PIPE=1 bash "$S/dj.sh" >/dev/null 2>&1
 ok "q quits without changes" '[ -d "$HOME/.gradle/caches/build-cache-1" ] && [ -d "$R/app/.claude/worktrees/dj" ]'
