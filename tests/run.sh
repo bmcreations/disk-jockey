@@ -86,11 +86,11 @@ ok "clean pushed worktree REMOVABLE" 'echo "$out" | grep -q "^REMOVABLE .*worktr
 ok "dirty worktree REVIEW" 'echo "$out" | grep -q "^REVIEW .*worktrees/dirty"'
 ok "unpushed worktree REVIEW" 'echo "$out" | grep -q "^REVIEW .*worktrees/unpushed"'
 ok "deleted worktree STALE-REF" 'echo "$out" | grep -q "^STALE-REF .*gone"'
-(cd "$R/app/$W/done" && sleep 15) &
+(cd "$R/app/$W/done" && exec sleep 15) &
 sleep 1
 ok "worktree with a process inside is IN-USE" 'bash "$S/worktrees.sh" "$R" 2>&1 | grep -q "^IN-USE .*worktrees/done"'
 kill %1 2>/dev/null; wait 2>/dev/null
-(cd "$R/app/$W/done" && sleep 15) &
+(cd "$R/app/$W/done" && exec sleep 15) &
 sleep 1
 ok "IN-USE detected via lsof when /proc is unavailable" '! lsof -v >/dev/null 2>&1 || RD_TEST_NO_PROC=1 bash "$S/worktrees.sh" "$R" 2>&1 | grep -q "^IN-USE .*worktrees/done"'
 kill %1 2>/dev/null; wait 2>/dev/null
