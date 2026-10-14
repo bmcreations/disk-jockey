@@ -12,7 +12,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: shellcheck
         run: shellcheck -S warning -e SC1091,SC2034,SC2016 scripts/*.sh tests/run.sh
       - name: no em dashes in docs
@@ -37,7 +37,7 @@ jobs:
             os: macos-latest
             bash: /bin/bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: hide lsof
         if: matrix.no_lsof
         run: sudo mv "$(command -v lsof)" /usr/local/lsof.hidden || true
@@ -61,7 +61,7 @@ jobs:
     env:
       RD_NO_CMD: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: preflight
         run: bash scripts/preflight.sh
       - name: scan

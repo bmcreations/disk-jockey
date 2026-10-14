@@ -11,7 +11,15 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER
 export GIT_AUTHOR_DATE=2026-01-01T10:00:00 GIT_COMMITTER_DATE=2026-01-01T10:00:00
 mkdir -p "$HOME"
 pass=0 fail=0
-ok() { if eval "$2"; then pass=$((pass + 1)); echo "  ok    $1"; else fail=$((fail + 1)); echo "  FAIL  $1"; fi; }
+ok() {
+  if eval "$2"; then
+    pass=$((pass + 1)); echo "  ok    $1"
+  else
+    fail=$((fail + 1)); echo "  FAIL  $1"
+    # Surface failures as annotations in GitHub Actions.
+    [ -n "${GITHUB_ACTIONS:-}" ] && echo "::error title=test failed::$1"
+  fi
+}
 blob() { mkdir -p "$1"; head -c "${2:-200000}" /dev/zero >"$1/blob"; }
 # Portable "N days ago" timestamp for touch -t (GNU date or BSD date).
 ago() { date -d "$1 days ago" +%Y%m%d%H%M 2>/dev/null || date -v-"$1"d +%Y%m%d%H%M; }
