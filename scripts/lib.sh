@@ -68,10 +68,24 @@ size_kb() {
   echo "$t"
 }
 
+# Filesystem type holding PATH (apfs, btrfs, ext4, zfs, ...).
+fs_type() {
+  if is_mac; then
+    diskutil info "$(df -P "$1" | awk 'NR==2{print $1}')" 2>/dev/null | awk -F: '/Type \(Bundle\)/{gsub(/ /,"",$2); print $2}'
+  elif have findmnt; then
+    findmnt -n -o FSTYPE -T "$1" 2>/dev/null
+  else
+    stat -f -c %T "$1" 2>/dev/null
+  fi
+}
+
 # 0 if the tool behind a cmd: target can run now (installed, and for docker, daemon reachable).
 tool_ready() {
   have "$1" || return 1
-  case "$1" in docker) docker info >/dev/null 2>&1 ;; esac
+  case "$1" in
+    docker) docker info >/dev/null 2>&1 ;;
+    podman) podman info >/dev/null 2>&1 ;;
+  esac
 }
 
 # Expand a comma-separated path field (~ and globs, spaces allowed). Prints existing matches.
@@ -227,9 +241,41 @@ default_roots() {
 }
 
 # Current working directories of the user's processes (agents, shells, daemons).
+# Linux reads /proc directly (fast, no dependency); elsewhere lsof.
+# Returns 3 when no method is available, so callers can refuse to delete instead of assuming "not in use".
 process_cwds() {
-  have lsof || return 0
-  lsof -nP -d cwd -Fn 2>/dev/null | sed -n 's/^n//p'
+  if [ -z "${RD_TEST_NO_PROC:-}" ] && [ -d /proc/self ] && [ -e /proc/self/cwd ]; then
+    local d
+    for d in /proc/[0-9]*/cwd; do
+      readlink "$d" 2>/dev/null
+    done | sort -u
+    return 0
+  fi
+  if [ -z "${RD_TEST_NO_LSOF:-}" ] && have lsof; then
+    # lsof exits 1 when it can't read some processes, so judge by output: none at all means it failed.
+    local out
+    out=$(lsof -nP -d cwd -Fn 2>/dev/null | sed -n 's/^n//p')
+    if [ -n "$out" ]; then
+      printf '%s\n' "$out"
+      return 0
+    fi
+  fi
+  return 3
+}
+
+# Sets $cwds for a script, or stops --apply when processes can't be inspected.
+# RD_SKIP_INUSE_CHECK=1 overrides (the user accepts the risk).
+load_cwds() { # apply-flag
+  cwds=$(process_cwds)
+  if [ $? -eq 3 ]; then
+    cwds=""
+    if [ "$1" = 1 ] && [ "${RD_SKIP_INUSE_CHECK:-}" != 1 ]; then
+      log "Can't check which folders running processes are using (no /proc and no lsof)."
+      log "Install lsof, or set RD_SKIP_INUSE_CHECK=1 to delete without that check."
+      exit 3
+    fi
+    log "Note: no /proc or lsof, so IN-USE detection is off for this run."
+  fi
 }
 
 # 0 if any process has its cwd at or under DIR. Pass cwds list as $2.
@@ -241,14 +287,16 @@ dir_in_use() {
 category_of() {
   case "$1" in
     xcode-* | xctest-* | sim-* | simulators | coresim-* | swift* | cocoapods-*) echo "Xcode & Simulators" ;;
+    android-studio-* | jetbrains-*) echo "IDEs" ;;
     android-* | avd-* | gradle-* | kotlin-* | konan-* | maven-*) echo "Android & JVM" ;;
     npm-* | pnpm-* | yarn-* | bun-*) echo "JavaScript" ;;
     pip-* | uv-* | ml-models) echo "Python & ML" ;;
     go-* | cargo-*) echo "Go & Rust" ;;
-    docker-*) echo "Docker" ;;
     playwright-* | puppeteer-*) echo "Browsers" ;;
     brew-*) echo "Homebrew" ;;
     agent-state | claude-*) echo "Agents" ;;
+    docker-* | podman-*) echo "Containers" ;;
+    snap-* | flatpak-* | journal* | apt-* | dnf-* | pacman-* | thumbnails) echo "System" ;;
     *) echo "Other" ;;
   esac
 }

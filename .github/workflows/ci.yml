@@ -1,0 +1,70 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        run: shellcheck -S warning -e SC1091,SC2034,SC2016 scripts/*.sh tests/run.sh
+      - name: no em dashes in docs
+        run: "! grep -rn $'—' README.md SKILL.md"
+
+  test:
+    name: test (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: ubuntu
+            os: ubuntu-latest
+            bash: bash
+          - name: ubuntu, no lsof
+            os: ubuntu-latest
+            bash: bash
+            no_lsof: true
+          # Stock macOS bash is 3.2. Run the suite with it so bash 4+ features never slip in.
+          - name: macos, bash 3.2
+            os: macos-latest
+            bash: /bin/bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: hide lsof
+        if: matrix.no_lsof
+        run: sudo mv "$(command -v lsof)" /usr/local/lsof.hidden || true
+      - name: bash version
+        run: ${{ matrix.bash }} --version | head -1
+      - name: tests
+        run: |
+          # Put the matrix bash first on PATH so scripts the tests spawn use it too.
+          mkdir -p "$RUNNER_TEMP/bin"
+          ln -sf "$(command -v ${{ matrix.bash }})" "$RUNNER_TEMP/bin/bash"
+          PATH="$RUNNER_TEMP/bin:$PATH" ${{ matrix.bash }} tests/run.sh
+
+  # Windows support is in progress. This job runs the read-only scripts under Git Bash
+  # to track what works; it does not fail the build yet.
+  windows-smoke:
+    runs-on: windows-latest
+    continue-on-error: true
+    defaults:
+      run:
+        shell: bash
+    env:
+      RD_NO_CMD: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: preflight
+        run: bash scripts/preflight.sh
+      - name: scan
+        run: bash scripts/scan.sh --tsv | head -20
+      - name: clean (dry run)
+        run: bash scripts/clean.sh --tier 2

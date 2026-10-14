@@ -95,7 +95,58 @@ if is_mac && have tmutil; then
     row WARN timemachine-snapshots "$tm" "Local Time Machine snapshots pin deleted data. sudo tmutil deletelocalsnapshots / (backups on the TM drive are unaffected)."
   fi
   [ "$osu" -eq 0 ] && [ "$tm" -eq 0 ] && row OK snapshots 0 ""
+elif ! is_mac; then
+  # Linux: copy-on-write filesystems and LVM keep deleted blocks while a snapshot references them.
+  fstype=$(fs_type "$HOME")
+  snap_found=0
+  case "$fstype" in
+    btrfs)
+      n=""
+      for d in /.snapshots /home/.snapshots /timeshift-btrfs/snapshots /run/timeshift/backup/timeshift-btrfs/snapshots; do
+        [ -d "$d" ] && [ -r "$d" ] && n=$((${n:-0} + $(find "$d" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l)))
+      done
+      if [ -n "$n" ] && [ "$n" -gt 0 ]; then
+        row WARN btrfs-snapshots "$n" "Snapper/Timeshift snapshots pin deleted data. Review with sudo snapper list (or Timeshift) and delete old ones."
+        snap_found=1
+      elif have snapper || have timeshift; then
+        row INFO btrfs-snapshots "unknown" "btrfs with Snapper/Timeshift: snapshots may pin deleted data. Check with sudo snapper list."
+        snap_found=1
+      fi
+      ;;
+    zfs)
+      if have zfs; then
+        n=$(zfs list -H -t snapshot -o name 2>/dev/null | wc -l | tr -d ' ')
+        if [ "${n:-0}" -gt 0 ]; then
+          used=$(zfs list -Hp -t snapshot -o used 2>/dev/null | awk '{s+=$1} END{printf "%d", s/1024}')
+          row WARN zfs-snapshots "$n ($(human "${used:-0}"))" "ZFS snapshots pin deleted data. zfs list -t snapshot; zfs destroy old ones."
+          snap_found=1
+        fi
+      fi
+      ;;
+  esac
+  if have lvs; then
+    n=$(lvs --noheadings -o lv_attr 2>/dev/null | awk '$1 ~ /^s/ {c++} END{print c+0}')
+    if [ "${n:-0}" -gt 0 ]; then
+      row WARN lvm-snapshots "$n" "LVM snapshots consume space as data changes. sudo lvs; lvremove old ones."
+      snap_found=1
+    fi
+  fi
+  [ "$snap_found" = 0 ] && row OK snapshots "0 ($fstype)" ""
 fi
+
+# --- Container engines hide space inside their own storage; ask them, since du can't read it.
+for eng in docker podman; do
+  tool_ready "$eng" || continue
+  rec=$("$eng" system df --format '{{.Reclaimable}}' 2>/dev/null | sed -n 's/^\([0-9.]*[kKMGT]*B\).*/\1/p' | awk '
+    { v=$1; u=v; gsub(/[0-9.]/,"",u); n=v; gsub(/[^0-9.]/,"",n)
+      m=1; if(u~/^k|^K/)m=1; if(u~/^M/)m=1024; if(u~/^G/)m=1048576; if(u~/^T/)m=1073741824; if(u=="B")m=1/1024
+      s+=n*m } END{printf "%d", s}')
+  if [ "${rec:-0}" -gt $((5 * 1024 * 1024)) ]; then
+    row WARN "$eng-reclaimable" "$(human "$rec")" "$eng system df -v shows what. Unused images/build cache: clean.sh --tier 2 --only ${eng}-dangling,${eng}-build-cache"
+  elif [ -n "$rec" ]; then
+    row OK "$eng-reclaimable" "$(human "${rec:-0}")" ""
+  fi
+done
 
 # --- Uptime: swap and temp only fully clear on reboot
 if is_mac; then

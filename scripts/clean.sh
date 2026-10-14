@@ -56,6 +56,7 @@ while IFS='|' read -r tier id os paths action busy note; do
 
   case "$action" in
     cmd:*)
+      [ "${RD_NO_CMD:-}" = 1 ] && continue
       c="${action#cmd:}"
       tool_ready "${c%% *}" || continue
       if is_busy "$busy"; then say "  ${C_Y}skip$C_0  $id ${C_DIM}(busy: matches '$busy')$C_0"; continue; fi

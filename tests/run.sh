@@ -5,19 +5,28 @@ set -u
 S="$(cd "$(dirname "$0")/../scripts" && pwd)"
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
-export HOME="$T/home" RD_ROOTS="$T/home/code" RD_GH=0
+# RD_NO_CMD: tool-managed targets (npm, xcrun, docker, ...) act outside $HOME, so tests never run them.
+export HOME="$T/home" RD_ROOTS="$T/home/code" RD_GH=0 RD_NO_CMD=1
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 export GIT_AUTHOR_DATE=2026-01-01T10:00:00 GIT_COMMITTER_DATE=2026-01-01T10:00:00
 mkdir -p "$HOME"
 pass=0 fail=0
 ok() { if eval "$2"; then pass=$((pass + 1)); echo "  ok    $1"; else fail=$((fail + 1)); echo "  FAIL  $1"; fi; }
 blob() { mkdir -p "$1"; head -c "${2:-200000}" /dev/zero >"$1/blob"; }
-age() { touch -h -d "$1 days ago" "$2"; }
+# Portable "N days ago" timestamp for touch -t (GNU date or BSD date).
+ago() { date -d "$1 days ago" +%Y%m%d%H%M 2>/dev/null || date -v-"$1"d +%Y%m%d%H%M; }
+backdate() { # days path...  (sets mtime/atime on each path, not following symlinks)
+  local t; t=$(ago "$1"); shift
+  touch -h -t "$t" "$@" 2>/dev/null
+}
+is_linux_host() { [ "$(uname -s)" = Linux ]; }
+BROKEN="$T/broken"; mkdir -p "$BROKEN"; printf '#!/bin/sh\nexit 1\n' >"$BROKEN/lsof"; chmod +x "$BROKEN/lsof"
+have_lsof() { command -v lsof >/dev/null 2>&1; }
 g() { git -c init.defaultBranch=main "$@" >/dev/null 2>&1; }
 
 echo "== fixtures"
 blob "$HOME/.gradle/caches/build-cache-1"
-blob "$HOME/.gradle/caches/7.6/x"; find "$HOME/.gradle/caches/7.6" -exec touch -d '60 days ago' {} +
+blob "$HOME/.gradle/caches/7.6/x"; find "$HOME/.gradle/caches/7.6" -exec touch -h -t "$(ago 60)" {} +
 blob "$HOME/.gradle/caches/9.7.1/x"
 echo "signing.password=secret" >"$HOME/.gradle/gradle.properties"
 blob "$HOME/.android/cache"; head -c 2000 /dev/zero >"$HOME/.android/debug.keystore"
@@ -26,7 +35,7 @@ blob "$HOME/.android/avd/Pixel.avd/data"
 blob "$HOME/.claude/projects"
 mkdir -p "$HOME/elsewhere" "$HOME/.bun/install"; ln -s "$HOME/elsewhere" "$HOME/.bun/install/cache"
 # Old mtimes but freshly extracted (ctime now): must NOT count as stale.
-blob "$HOME/.cache/ms-playwright/chromium-new"; touch -d '90 days ago' "$HOME/.cache/ms-playwright/chromium-new/blob"
+blob "$HOME/.cache/ms-playwright/chromium-new"; backdate 90 "$HOME/.cache/ms-playwright/chromium-new/blob"
 
 R="$HOME/code"; mkdir -p "$R"; cd "$R" || exit 1
 g init --bare origin.git; g clone origin.git app; cd app || exit 1
@@ -40,7 +49,7 @@ g worktree add $W/unpushed -b agent/unpushed; (cd $W/unpushed && echo z >z && g 
 g worktree add "$R/gone" -b agent/gone; rm -rf "$R/gone"
 for w in "done" dirty unpushed; do blob "$W/$w/app/build" 300000; done
 blob app/build 300000; blob .gradle 100000
-find "$R" -exec touch -h -d '30 days ago' {} + 2>/dev/null
+find "$R" -exec touch -h -t "$(ago 30)" {} + 2>/dev/null
 cd "$T" || exit 1
 
 echo "== clean.sh"
@@ -73,6 +82,13 @@ ok "deleted worktree STALE-REF" 'echo "$out" | grep -q "^STALE-REF .*gone"'
 sleep 1
 ok "worktree with a process inside is IN-USE" 'bash "$S/worktrees.sh" "$R" 2>&1 | grep -q "^IN-USE .*worktrees/done"'
 kill %1 2>/dev/null; wait 2>/dev/null
+(cd "$R/app/$W/done" && sleep 15) &
+sleep 1
+ok "IN-USE detected via lsof when /proc is unavailable" '! lsof -v >/dev/null 2>&1 || RD_TEST_NO_PROC=1 bash "$S/worktrees.sh" "$R" 2>&1 | grep -q "^IN-USE .*worktrees/done"'
+kill %1 2>/dev/null; wait 2>/dev/null
+ok "apply refused when processes can't be inspected" '! RD_TEST_NO_PROC=1 RD_TEST_NO_LSOF=1 bash "$S/worktrees.sh" --apply "$R" >/dev/null 2>&1 && [ -e "$R/app/$W/done" ]'
+ok "broken lsof counts as unknown, not as nothing in use" '! RD_TEST_NO_PROC=1 PATH="$BROKEN:$PATH" bash "$S/worktrees.sh" --apply "$R" >/dev/null 2>&1 && [ -e "$R/app/$W/done" ]'
+ok "dry run still works without process inspection" 'RD_TEST_NO_PROC=1 RD_TEST_NO_LSOF=1 bash "$S/worktrees.sh" "$R" 2>/dev/null | grep -q REMOVABLE'
 bash "$S/worktrees.sh" --apply "$R" >/dev/null 2>&1
 ok "apply removed REMOVABLE" '[ ! -e "$R/app/$W/done" ]'
 ok "apply kept dirty" '[ -f "$R/app/$W/dirty/new.txt" ]'
@@ -80,7 +96,7 @@ ok "apply kept unpushed" '[ -f "$R/app/$W/unpushed/z" ]'
 ok "apply pruned stale ref" '! git -C "$R/app" worktree list | grep -q gone'
 
 echo "== sweep.sh"
-find "$R" -exec touch -h -d '30 days ago' {} + 2>/dev/null
+find "$R" -exec touch -h -t "$(ago 30)" {} + 2>/dev/null
 bash "$S/sweep.sh" --apply "$R" >/dev/null 2>&1
 ok "main repo build/ removed" '[ ! -e "$R/app/app/build" ]'
 ok "main repo .gradle removed" '[ ! -e "$R/app/.gradle" ]'
@@ -93,6 +109,21 @@ echo "== preflight.sh / disk-guard.sh"
 ok "preflight runs" 'bash "$S/preflight.sh" >/dev/null 2>&1'
 ok "guard warns under threshold" 'bash "$S/disk-guard.sh" 999999G | grep -q "LOW DISK"'
 ok "guard silent above threshold" '[ -z "$(bash "$S/disk-guard.sh" 1K)" ]'
+
+echo "== linux probes (fake tools)"
+FB="$T/fakebin"; mkdir -p "$FB"
+printf '#!/bin/sh\necho btrfs\n' >"$FB/findmnt"
+printf '#!/bin/sh\nexit 0\n' >"$FB/snapper"
+printf '#!/bin/sh\ncase "$1" in info) exit 0;; system) printf "%%s\\n" "3.2GB (60%%)" "1.5GB" "800MB (100%%)" "2.5GB";; esac\n' >"$FB/docker"
+printf '#!/bin/sh\nprintf "  -wi-ao----\\n  swi-a-s---\\n"\n' >"$FB/lvs"
+chmod +x "$FB"/*
+pf=$(PATH="$FB:$PATH" bash "$S/preflight.sh" 2>&1)
+if is_linux_host; then
+  ok "btrfs with snapper reported" 'echo "$pf" | grep -q "btrfs-snapshots"'
+  ok "LVM snapshot counted" 'echo "$pf" | grep -q "^WARN  lvm-snapshots .* 1 "'
+fi
+ok "docker reclaimable summed (8.0G)" 'echo "$pf" | grep -q "docker-reclaimable .*8.0G"'
+ok "docker targets skipped when daemon is down" '! PATH="$FB:$PATH" DOCKER_DOWN=1 bash -c "printf \"#!/bin/sh\\nexit 1\\n\" >\"$FB/docker\"; bash \"$S/preflight.sh\"" | grep -q docker-reclaimable'
 
 echo "== colors"
 esc=$(printf '\033[')
@@ -107,7 +138,7 @@ blob "$HOME/.gradle/caches/build-cache-1"
 blob "$HOME/.gradle/caches/modules-2"
 (cd "$R/app" && g worktree add .claude/worktrees/dj -b agent/dj)
 blob "$R/app/app/build"   # ensures the sweep prompt appears, so the scripted answers stay in order
-find "$R" -exec touch -h -d '30 days ago' {} + 2>/dev/null
+find "$R" -exec touch -h -t "$(ago 30)" {} + 2>/dev/null
 ok "refuses to run without a terminal" '! bash "$S/dj.sh" </dev/null >/dev/null 2>&1'
 printf 'q\n' | RD_ALLOW_PIPE=1 bash "$S/dj.sh" >/dev/null 2>&1
 ok "q quits without changes" '[ -d "$HOME/.gradle/caches/build-cache-1" ] && [ -d "$R/app/.claude/worktrees/dj" ]'

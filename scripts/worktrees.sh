@@ -46,7 +46,8 @@ if [ "${#roots[@]}" -eq 0 ]; then
 fi
 
 have git || { log "git not found"; exit 2; }
-cwds=$(process_cwds)
+cwds=""
+load_cwds "$apply"
 removable_kb=0 count=0
 
 find_repos() {

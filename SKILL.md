@@ -35,6 +35,8 @@ Checks free space, load average, swap, booted simulators, emulators, idle Gradle
 **Resolve WARN rows about memory or snapshots before deleting anything.** Deleting caches does not help if swap refills the disk.
 - Huge `kernel_task` disk writes in Activity Monitor are swap. Fix: `xcrun simctl shutdown all` (keeps simulator data), close idle emulators, `pkill -f GradleDaemon; pkill -f KotlinCompileDaemon` when no build runs, then reboot to delete the swap files.
 - `os-update-snapshots`: a staged macOS update pins every block deleted since it was staged. Installing the update releases it. `tmutil deletelocalsnapshots` does not remove these.
+- `btrfs-snapshots`, `zfs-snapshots`, `lvm-snapshots` (Linux): snapshots keep deleted blocks allocated. Show the user the listing command from the advice column; deleting snapshots needs their decision and usually `sudo`.
+- `docker-reclaimable`, `podman-reclaimable`: what the engine itself says it can free. Container storage is invisible to `du`.
 - `timemachine-snapshots`: `sudo tmutil deletelocalsnapshots /` (backups on the external drive are unaffected).
 
 Ask before stopping simulators, emulators or daemons. An agent may be mid-test.
@@ -97,6 +99,7 @@ Compare free space before and after. If much less was freed than expected on mac
 - **Rebuild cost.** Clearing DerivedData, Gradle caches or `build/` makes the next build cold. Don't do it right before a demo or release build.
 - **`Xcode/Archives` holds dSYMs.** Deleting them breaks crash symbolication for shipped builds. Tier 3 for that reason.
 - **AVD and simulator deletion loses app state** (logins, test data). Only quickboot snapshots are tier 1.
+- **No way to see process working directories** (no `/proc`, `lsof` missing or failing): `worktrees.sh --apply` and `sweep.sh --apply` exit with code 3 instead of guessing. Tell the user to install `lsof`; only set `RD_SKIP_INUSE_CHECK=1` if they explicitly accept that a running agent's worktree could be deleted.
 - **Running in a VM with a mounted home** (some agent sandboxes): worktree `.git` files hold host paths, so git fails there, and mounts make `du` very slow. Run these scripts natively on the host.
 - **Scheduled runs can't see `~/Documents`, `~/Desktop` or iCloud folders** on macOS without Full Disk Access. Install the skill elsewhere, e.g. `~/.claude/skills/disk-jockey`.
 

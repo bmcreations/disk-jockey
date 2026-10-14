@@ -6,7 +6,7 @@
   <img src="https://img.shields.io/badge/macOS%20%7C%20Linux-111?style=flat-square&logo=apple&logoColor=white" alt="macOS and Linux">
   <img src="https://img.shields.io/badge/bash-3.2%2B-4EAA25?style=flat-square&logo=gnubash&logoColor=white" alt="bash 3.2+">
   <img src="https://img.shields.io/badge/Claude-skill-D97757?style=flat-square" alt="Claude skill">
-  <img src="https://img.shields.io/badge/tests-43%20passing-3FB950?style=flat-square" alt="43 tests passing">
+  <a href="https://github.com/bmcreations/disk-jockey/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/bmcreations/disk-jockey/ci.yml?branch=main&style=flat-square&label=tests" alt="CI status"></a>
   <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="MIT license">
 </p>
 
@@ -91,6 +91,7 @@ scripts/clean.sh              # dry run; add --apply to act
 - **Dry run first**, every script. Nothing is deleted without `--apply`.
 - **Protected paths** can't be deleted, nor any folder containing them: `debug.keystore`, `gradle.properties` (signing secrets), `.ssh`, Keychains, provisioning profiles, agent settings.
 - **Busy checks.** A target is skipped while a process using it runs (`xcodebuild`, `GradleDaemon`, `qemu-system`).
+- **In-use checks fail safe.** Worktrees and projects with a process inside are skipped (read from `/proc` on Linux, `lsof` on macOS). If neither works, `--apply` refuses to run rather than assuming nothing is in use.
 - **Symlinks** are never followed or deleted.
 - **Color** only on an interactive terminal. Agents reading through a pipe get plain text. `NO_COLOR=1` turns it off, `FORCE_COLOR=1` forces it.
 - **Worktrees** are removed only via `git worktree remove`, which itself refuses dirty trees. Branches are kept.
@@ -125,6 +126,9 @@ Not through the scripts. Uncommitted or unpushed worktrees are reported as `REVI
 
 **Does it need sudo?**
 No. Deleting Time Machine local snapshots does, and the script prints that command for you rather than running it.
+
+**Which platforms are covered?**
+macOS and Linux are fully supported and tested in CI on every push, including macOS's stock bash 3.2 and Linux without `lsof`. On Linux, preflight also detects btrfs (Snapper/Timeshift), ZFS and LVM snapshots and asks Docker/Podman what they can reclaim; scan covers Snap, Flatpak, rootless containers, JetBrains and Android Studio caches, and reports system package caches and logs with the `sudo` command to clear them. Windows (Git Bash) is in progress: the read-only scripts run in CI but aren't supported yet.
 
 **Running in a sandbox VM with your home mounted?**
 Run the scripts natively instead. Worktree `.git` files contain host paths, and `du` over a mount is very slow.

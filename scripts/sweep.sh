@@ -37,7 +37,8 @@ if [ "${#roots[@]}" -eq 0 ]; then
 fi
 have git || { log "git not found"; exit 2; }
 
-cwds=$(process_cwds)
+cwds=""
+load_cwds "$apply"
 now=$(date +%s)
 total=0
 
