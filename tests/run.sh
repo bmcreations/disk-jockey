@@ -71,7 +71,7 @@ out=$(bash "$S/clean.sh" --tier 2 --skip docker-build-cache,docker-dangling,pip-
 ok "dry run deletes nothing" '[ -d "$HOME/.gradle/caches/build-cache-1" ]'
 # ctime can't be backdated in a test, so check mtime-staleness with ctime ignored.
 out2=$(RD_IGNORE_CTIME=1 bash "$S/clean.sh" --only gradle-old-versions 2>&1)
-ok "dry run lists stale gradle 7.6" 'echo "$out2" | grep -q "caches/7.6"'
+ok "dry run lists stale gradle 7.6" 'echo "$out2" | grep -q "caches/7.6"' "$out2 || $(find "$HOME/.gradle/caches/7.6" -exec ls -ld --time-style=+%F {} + 2>&1)"
 ok "recent gradle 9.7.1 not listed" '! echo "$out" | grep -q "caches/9.7.1"'
 [ "$has_symlinks" = 1 ] && ok "symlinked cache guarded" 'echo "$out" | grep -q "guard .*bun/install/cache"'
 ok "freshly extracted browser not stale" '! echo "$out" | grep -q chromium-new'

@@ -18,6 +18,8 @@ norm_path() {
 RD_TMP="${TMPDIR:-/tmp}/disk-jockey-$(id -u 2>/dev/null || echo 0)"
 mkdir -p "$RD_TMP" 2>/dev/null
 find "$RD_TMP" -type f -mmin +60 -exec rm -f {} + 2>/dev/null
+# PIDs are reused (quickly on Windows): never inherit a cache file from an earlier process.
+rm -f "$RD_TMP/procs.$$" "$RD_TMP/facts.$$" 2>/dev/null
 
 # Colors: on for an interactive terminal only, so agents reading through a pipe get plain text.
 # NO_COLOR=1 turns them off, FORCE_COLOR=1 forces them on. Truecolor when the terminal advertises it.
@@ -222,9 +224,11 @@ win_fact() { # key
 is_busy() {
   [ -n "$1" ] && [ "$1" != "-" ] || return 1
   local IFS=',' pat pid
+  RD_BUSY_BY=""
   if is_win; then
     for pat in $1; do
-      win_procs | grep -Eq -- "$pat" && return 0
+      RD_BUSY_BY=$(win_procs | grep -E -- "$pat" | head -n 1 | awk '{print $1" "$2}')
+      [ -n "$RD_BUSY_BY" ] && return 0
     done
     return 1
   fi
@@ -233,6 +237,7 @@ is_busy() {
     for pid in $(pgrep -f -- "$pat" 2>/dev/null); do
       # Ignore this script and the shell/agent that launched it (their command lines may contain the pattern).
       case "$RD_ANCESTORS" in *" $pid "*) continue ;; esac
+      RD_BUSY_BY="$pid $(ps -o comm= -p "$pid" 2>/dev/null | sed 's#.*/##')"
       return 0
     done
   done

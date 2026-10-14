@@ -59,7 +59,7 @@ while IFS='|' read -r tier id os paths action busy note; do
       [ "${RD_NO_CMD:-}" = 1 ] && continue
       c="${action#cmd:}"
       tool_ready "${c%% *}" || continue
-      if is_busy "$busy"; then say "  ${C_Y}skip$C_0  $id ${C_DIM}(busy: matches '$busy')$C_0"; continue; fi
+      if is_busy "$busy"; then say "  ${C_Y}skip$C_0  $id ${C_DIM}(busy: $RD_BUSY_BY matches '$busy')$C_0"; continue; fi
       kb=$(expand_paths "$paths" | size_kb)
       planned=$((planned + kb))
       say "  ${C_C}run$C_0   $id: $c  $C_DIM(~$(human "$kb"))$C_0"
@@ -73,7 +73,7 @@ while IFS='|' read -r tier id os paths action busy note; do
     *)
       matches=$(target_matches "$paths" "$action")
       [ -n "$matches" ] || continue
-      if is_busy "$busy"; then say "  ${C_Y}skip$C_0  $id ${C_DIM}(busy: matches '$busy')$C_0"; continue; fi
+      if is_busy "$busy"; then say "  ${C_Y}skip$C_0  $id ${C_DIM}(busy: $RD_BUSY_BY matches '$busy')$C_0"; continue; fi
       while IFS= read -r m; do
         [ -n "$m" ] || continue
         if ! safe_to_delete "$m"; then
