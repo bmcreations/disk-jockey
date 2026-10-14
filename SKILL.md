@@ -86,7 +86,7 @@ Deletes `build/`, `.gradle/`, `.cxx/`, `.kotlin/`, `node_modules`, `.next`, `tar
 Compare free space before and after. If much less was freed than expected on macOS, re-run `preflight.sh`: snapshots or swap are holding it.
 
 ### 7. Prevent (offer once the disk is healthy)
-- **Scheduled cleanup:** `scripts/schedule.sh install --threshold 50G` runs tier 1 daily, only when free space drops below the threshold (launchd on macOS, systemd user timer on Linux).
+- **Scheduled cleanup:** `scripts/schedule.sh install --threshold 50G` runs tier 1 daily, only when free space drops below the threshold (launchd on macOS, systemd user timer on Linux, Task Scheduler on Windows).
 - **Agent guard:** `scripts/disk-guard.sh 20G` prints a warning when space is low; wire it into an agent SessionStart hook so agents see it before heavy work.
 - **Worktree hygiene:** remove a worktree when its PR is merged; run `worktrees.sh` weekly.
 - **Per-task cleanup:** at the end of a task, `xcrun simctl shutdown all` for simulators the task booted, close emulators it started, and stop Gradle daemons.
@@ -100,6 +100,7 @@ Compare free space before and after. If much less was freed than expected on mac
 - **`Xcode/Archives` holds dSYMs.** Deleting them breaks crash symbolication for shipped builds. Tier 3 for that reason.
 - **AVD and simulator deletion loses app state** (logins, test data). Only quickboot snapshots are tier 1.
 - **No way to see process working directories** (no `/proc`, `lsof` missing or failing): `worktrees.sh --apply` and `sweep.sh --apply` exit with code 3 instead of guessing. Tell the user to install `lsof`; only set `RD_SKIP_INUSE_CHECK=1` if they explicitly accept that a running agent's worktree could be deleted.
+- **Windows:** run everything in Git Bash, not PowerShell or cmd. Native programs' working folders aren't visible to `/proc`, so `--apply` test-renames each folder first and skips it if Windows says it's in use (expect a few false "in use" skips while antivirus scans; they're safe). WSL and Docker Desktop `.vhdx` disks only shrink when compacted: tell the user to prune inside them first, then follow the advice in scan's note. Pagefile, hibernation file, restore points and Windows Update cleanup need an admin terminal: give the user the command, don't try to elevate.
 - **Running in a VM with a mounted home** (some agent sandboxes): worktree `.git` files hold host paths, so git fails there, and mounts make `du` very slow. Run these scripts natively on the host.
 - **Scheduled runs can't see `~/Documents`, `~/Desktop` or iCloud folders** on macOS without Full Disk Access. Install the skill elsewhere, e.g. `~/.claude/skills/disk-jockey`.
 
