@@ -9,7 +9,7 @@ if [ ! -t 1 ] && [ -z "${RD_ALLOW_PIPE:-}" ]; then
   exit 2
 fi
 
-CATS=("Xcode & Simulators" "Android & JVM" "IDEs" "JavaScript" "Python & ML" "Go & Rust" "Containers" "Browsers" "Homebrew" "System" "Agents" "Other")
+CATS=("Xcode & Simulators" "Android & JVM" "IDEs" "JavaScript" "Python & ML" "Go & Rust" "Containers" "Browsers" "Homebrew" ".NET" "System" "Agents" "Other")
 
 ask() { # question default(y|n): 0 for yes
   local a d="${2:-n}" hint="[y/N]"

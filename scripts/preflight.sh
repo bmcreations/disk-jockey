@@ -31,15 +31,24 @@ else
   row OK free-space "$(human "$free") (${pct}%)" ""
 fi
 
-# --- CPU load
-if is_mac; then
+# --- CPU load (Windows has no load average; use CPU %)
+if is_win; then
+  cpu=$(win_fact cpu_load_pct)
+  if [ -n "$cpu" ]; then
+    if [ "$cpu" -ge 90 ]; then
+      row WARN cpu "${cpu}%" "CPU saturated. Often memory pressure: pagefile thrashing from emulators, WSL, Docker or idle daemons."
+    else
+      row OK cpu "${cpu}%" ""
+    fi
+  fi
+elif is_mac; then
   cores=$(sysctl -n hw.ncpu 2>/dev/null)
   load=$(sysctl -n vm.loadavg 2>/dev/null | awk '{print $2}')
 else
   cores=$(nproc 2>/dev/null)
   load=$(awk '{print $1}' /proc/loadavg 2>/dev/null)
 fi
-if [ -n "$load" ] && [ -n "$cores" ]; then
+if ! is_win && [ -n "$load" ] && [ -n "$cores" ]; then
   if awk -v l="$load" -v c="$cores" 'BEGIN{exit !(l > c * 4)}'; then
     row WARN load "$load on $cores cores" "Processes are stalled (usually on disk I/O from swapping). Fix memory first."
   else
@@ -54,10 +63,32 @@ if is_mac; then
 else
   swap_kb=$(awk '/SwapTotal/{t=$2} /SwapFree/{f=$2} END{print t-f}' /proc/meminfo 2>/dev/null)
 fi
+swap_name=swap
+is_win && swap_name=pagefile-used
 if [ "${swap_kb:-0}" -gt $((8 * 1024 * 1024)) ]; then
-  row WARN swap "$(human "$swap_kb")" "Swap files live on the same disk and grow under memory pressure. Close sims/emulators/daemons; reboot to reclaim."
+  row WARN "$swap_name" "$(human "$swap_kb")" "Swap/pagefile lives on the same disk and grows under memory pressure. Close sims/emulators/daemons; reboot to reclaim."
 else
-  row OK swap "$(human "${swap_kb:-0}")" ""
+  row OK "$swap_name" "$(human "${swap_kb:-0}")" ""
+fi
+
+# --- Windows: hidden system files and virtual disks that only grow
+if is_win; then
+  pf=$(win_fact pagefile_kb)
+  [ -n "$pf" ] && [ "$pf" -gt $((16 * 1024 * 1024)) ] &&
+    row INFO pagefile.sys "$(human "$pf")" "Grows with memory pressure and shrinks after a reboot. Fix memory use first."
+  hib=$(win_fact hiberfil_kb)
+  [ -n "$hib" ] && [ "$hib" -gt $((4 * 1024 * 1024)) ] &&
+    row INFO hiberfil.sys "$(human "$hib")" "Hibernation file. If you never hibernate: powercfg /hibernate off (admin terminal)."
+  vhd_kb=0
+  while IFS='|' read -r _ id _ paths _ _ _; do
+    case "$id" in wsl-disks | docker-desktop-disk) ;; *) continue ;; esac
+    vhd_kb=$((vhd_kb + $(expand_paths "$paths" | size_kb)))
+  done < <(each_target)
+  if [ "$vhd_kb" -gt $((50 * 1024 * 1024)) ]; then
+    row WARN virtual-disks "$(human "$vhd_kb")" "WSL/Docker .vhdx files never shrink when you delete inside them. Prune inside, then compact (scan.sh shows each disk and how)."
+  elif [ "$vhd_kb" -gt 0 ]; then
+    row OK virtual-disks "$(human "$vhd_kb")" ""
+  fi
 fi
 
 # --- Memory consumers agents tend to leave behind
@@ -80,7 +111,7 @@ else
 fi
 builds=$(($(count_procs 'xcodebuild') + $(count_procs 'GradleWrapperMain')))
 row INFO active-builds "$builds" "Running builds. Targets they use are skipped by clean.sh; don't hand-delete build dirs now."
-agents=$(($(count_procs '(^|/)claude( |$)') + $(count_procs '(^|/)codex( |$)')))
+agents=$(($(count_procs '(^|[/\\ "])claude(\.exe)?("| |$)') + $(count_procs '(^|[/\\ "])codex(\.exe)?("| |$)')))
 row INFO agent-processes "$agents" "Concurrent agent sessions. More agents = more worktrees, builds, simulators."
 
 # --- Snapshots pin deleted data
@@ -95,7 +126,7 @@ if is_mac && have tmutil; then
     row WARN timemachine-snapshots "$tm" "Local Time Machine snapshots pin deleted data. sudo tmutil deletelocalsnapshots / (backups on the TM drive are unaffected)."
   fi
   [ "$osu" -eq 0 ] && [ "$tm" -eq 0 ] && row OK snapshots 0 ""
-elif ! is_mac; then
+elif is_linux; then
   # Linux: copy-on-write filesystems and LVM keep deleted blocks while a snapshot references them.
   fstype=$(fs_type "$HOME")
   snap_found=0

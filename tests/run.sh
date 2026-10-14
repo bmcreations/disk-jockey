@@ -27,6 +27,7 @@ backdate() { # days path...  (sets mtime/atime on each path, not following symli
   local t; t=$(ago "$1"); shift
   touch -h -t "$t" "$@" 2>/dev/null
 }
+is_windows_host() { case "$(uname -s)" in MINGW* | MSYS* | CYGWIN*) return 0 ;; esac; return 1; }
 is_linux_host() { [ "$(uname -s)" = Linux ]; }
 BROKEN="$T/broken"; mkdir -p "$BROKEN"; printf '#!/bin/sh\nexit 1\n' >"$BROKEN/lsof"; chmod +x "$BROKEN/lsof"
 have_lsof() { command -v lsof >/dev/null 2>&1; }
@@ -42,6 +43,8 @@ blob "$HOME/.android/avd/Pixel.avd/snapshots/default_boot"
 blob "$HOME/.android/avd/Pixel.avd/data"
 blob "$HOME/.claude/projects"
 mkdir -p "$HOME/elsewhere" "$HOME/.bun/install"; ln -s "$HOME/elsewhere" "$HOME/.bun/install/cache"
+# Git Bash copies instead of linking unless MSYS=winsymlinks:nativestrict; skip symlink checks then.
+has_symlinks=0; [ -L "$HOME/.bun/install/cache" ] && has_symlinks=1
 # Old mtimes but freshly extracted (ctime now): must NOT count as stale.
 blob "$HOME/.cache/ms-playwright/chromium-new"; backdate 90 "$HOME/.cache/ms-playwright/chromium-new/blob"
 
@@ -67,7 +70,7 @@ ok "dry run deletes nothing" '[ -d "$HOME/.gradle/caches/build-cache-1" ]'
 out2=$(RD_IGNORE_CTIME=1 bash "$S/clean.sh" --only gradle-old-versions 2>&1)
 ok "dry run lists stale gradle 7.6" 'echo "$out2" | grep -q "caches/7.6"'
 ok "recent gradle 9.7.1 not listed" '! echo "$out" | grep -q "caches/9.7.1"'
-ok "symlinked cache guarded" 'echo "$out" | grep -q "guard .*bun/install/cache"'
+[ "$has_symlinks" = 1 ] && ok "symlinked cache guarded" 'echo "$out" | grep -q "guard .*bun/install/cache"'
 ok "freshly extracted browser not stale" '! echo "$out" | grep -q chromium-new'
 bash "$S/clean.sh" --apply --skip docker-build-cache,pip-cache,npm-cache,pnpm-store,yarn-cache,uv-cache,go-build-cache,brew-cleanup >/dev/null 2>&1
 ok "tier 1 apply removed build cache" '[ ! -e "$HOME/.gradle/caches/build-cache-1" ]'
@@ -77,7 +80,7 @@ ok "debug.keystore kept" '[ -f "$HOME/.android/debug.keystore" ]'
 ok "gradle.properties kept" '[ -f "$HOME/.gradle/gradle.properties" ]'
 ok "tier 2 untouched at tier 1" '[ -d "$HOME/.gradle/caches/9.7.1" ]'
 ok "tier 3 agent transcripts kept" '[ -d "$HOME/.claude/projects" ]'
-ok "symlink target kept" '[ -d "$HOME/elsewhere" ]'
+[ "$has_symlinks" = 1 ] && ok "symlink target kept" '[ -d "$HOME/elsewhere" ]'
 ok "--if-free-below skips when space is fine" 'bash "$S/clean.sh" --apply --if-free-below 1K | grep -q "Nothing to do"'
 
 echo "== worktrees.sh"
@@ -132,6 +135,28 @@ if is_linux_host; then
 fi
 ok "docker reclaimable summed (8.0G)" 'echo "$pf" | grep -q "docker-reclaimable .*8.0G"'
 ok "docker targets skipped when daemon is down" '! PATH="$FB:$PATH" DOCKER_DOWN=1 bash -c "printf \"#!/bin/sh\\nexit 1\\n\" >\"$FB/docker\"; bash \"$S/preflight.sh\"" | grep -q docker-reclaimable'
+
+if is_windows_host; then
+  echo "== windows"
+  export LOCALAPPDATA; LOCALAPPDATA=$(cygpath -w "$HOME/AppData/Local")
+  mkdir -p "$HOME/AppData/Local/CrashDumps"
+  echo dump >"$HOME/AppData/Local/CrashDumps/app.old.dmp"; backdate 30 "$HOME/AppData/Local/CrashDumps/app.old.dmp"
+  echo dump >"$HOME/AppData/Local/CrashDumps/app.new.dmp"
+  bash "$S/clean.sh" --apply --only win-crashdumps >/dev/null 2>&1
+  ok "%LOCALAPPDATA% target: old crash dump removed" '[ ! -e "$HOME/AppData/Local/CrashDumps/app.old.dmp" ]'
+  ok "%LOCALAPPDATA% target: recent crash dump kept" '[ -e "$HOME/AppData/Local/CrashDumps/app.new.dmp" ]'
+  ok "git paths normalized (no C:/ in audit)" '! bash "$S/worktrees.sh" "$R" 2>/dev/null | grep -q "[A-Za-z]:/"'
+  # A native program (cmd.exe) working inside a worktree: invisible to /proc, caught by the rename probe.
+  (cd "$R/app" && g worktree add .claude/worktrees/native -b agent/native)
+  find "$R/app/.claude/worktrees/native" -exec touch -h -t "$(ago 30)" {} + 2>/dev/null
+  MSYS_NO_PATHCONV=1 cmd.exe /c "cd /d $(cygpath -w "$R/app/.claude/worktrees/native") && ping -n 25 127.0.0.1 >nul" &
+  sleep 3
+  out=$(bash "$S/worktrees.sh" --apply "$R" 2>&1)
+  ok "native process in worktree: reported IN-USE" 'echo "$out" | grep -q "^IN-USE .*worktrees/native"'
+  ok "native process in worktree: kept" '[ -d "$R/app/.claude/worktrees/native" ]'
+  ok "probe restored the folder name" '! ls "$R/app/.claude/worktrees" | grep -q dj-probe'
+  taskkill //F //IM ping.exe >/dev/null 2>&1; wait 2>/dev/null
+fi
 
 echo "== colors"
 esc=$(printf '\033[')

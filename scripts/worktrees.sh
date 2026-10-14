@@ -105,6 +105,8 @@ handle() { # repo wt head branch locked prunable main_head
     state=REVIEW; detail="$dirty uncommitted, $uniq commit(s) not on any remote or main"
   elif recently_touched "$wt"; then
     state=ACTIVE; detail="files changed < ${idle_days}d ago"
+  elif [ "$apply" = 1 ] && is_win && ! win_dir_free "$wt"; then
+    state=IN-USE; detail="Windows reports a program has it open"
   else
     state=REMOVABLE
     [ -n "$pr" ] && detail="PR #$pr merged; local commits were squashed upstream"
@@ -128,7 +130,7 @@ audit_repo() {
   local repo="$1" line wt="" head="" branch="" locked=0 prunable=0 first=1 main_head=""
   while IFS= read -r line; do
     case "$line" in
-      "worktree "*) wt="${line#worktree }" ;;
+      "worktree "*) wt=$(norm_path "${line#worktree }") ;;
       "HEAD "*) head="${line#HEAD }" ;;
       "branch "*) branch="${line#branch refs/heads/}" ;;
       detached) branch="(detached)" ;;

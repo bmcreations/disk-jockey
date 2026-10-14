@@ -50,21 +50,19 @@ jobs:
           ln -sf "$(command -v ${{ matrix.bash }})" "$RUNNER_TEMP/bin/bash"
           PATH="$RUNNER_TEMP/bin:$PATH" ${{ matrix.bash }} tests/run.sh
 
-  # Windows support is in progress. This job runs the read-only scripts under Git Bash
-  # to track what works; it does not fail the build yet.
-  windows-smoke:
+  # Windows via Git Bash (what Claude Code and most agent setups use on Windows).
+  test-windows:
+    name: test (windows, git bash)
     runs-on: windows-latest
-    continue-on-error: true
     defaults:
       run:
         shell: bash
     env:
-      RD_NO_CMD: "1"
+      # Real symlinks instead of copies, so the symlink guard is tested too.
+      MSYS: winsymlinks:nativestrict
     steps:
       - uses: actions/checkout@v5
-      - name: preflight
-        run: bash scripts/preflight.sh
-      - name: scan
-        run: bash scripts/scan.sh --tsv | head -20
-      - name: clean (dry run)
-        run: bash scripts/clean.sh --tier 2
+      - name: bash version
+        run: bash --version | head -1
+      - name: tests
+        run: bash tests/run.sh

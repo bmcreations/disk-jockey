@@ -52,7 +52,8 @@ find_projects() {
       -o -name .git -prune -print 2>/dev/null
   done | sed 's#/\.git$##' | sort -u | while IFS= read -r repo; do
     printf '%s\n' "$repo"
-    [ -d "$repo/.git" ] && git -C "$repo" worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p'
+    [ -d "$repo/.git" ] && git -C "$repo" worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p' |
+      while IFS= read -r w; do norm_path "$w"; echo; done
   done | sort -u
 }
 
@@ -91,17 +92,19 @@ while IFS= read -r proj; do
   case "$idx" in /*) ;; *) idx="$proj/$idx" ;; esac
   [ -n "$(find "$idx" -mtime "-$days" -print 2>/dev/null)" ] && continue
   dir_in_use "$proj" "$cwds" && continue
-  proj_top=$(git -C "$proj" rev-parse --show-toplevel 2>/dev/null)
+  proj_top=$(norm_path "$(git -C "$proj" rev-parse --show-toplevel 2>/dev/null)")
 
   while IFS= read -r a; do
     [ -n "$a" ] || continue
     is_artifact "$a" || continue
     # Nested repos/worktrees are swept as their own project, with their own idle and tracked-file checks.
-    owner=$(git -C "$(dirname "$a")" rev-parse --show-toplevel 2>/dev/null)
+    owner=$(norm_path "$(git -C "$(dirname "$a")" rev-parse --show-toplevel 2>/dev/null)")
     [ "$owner" = "$proj_top" ] || continue
     rel="${a#"$proj"/}"
     [ -n "$(git -C "$proj" ls-files -- "$rel" 2>/dev/null | head -n 1)" ] && continue
     safe_to_delete "$a" || continue
+    # Windows: skip build dirs a program (Gradle, IDE indexer, node) still has open.
+    if [ "$apply" = 1 ] && is_win && ! win_dir_free "$a"; then continue; fi
     kb=$(printf '%s\n' "$a" | size_kb)
     [ "$kb" -gt 0 ] || continue
     total=$((total + kb))

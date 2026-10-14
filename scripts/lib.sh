@@ -1,11 +1,23 @@
 #!/usr/bin/env bash
 # Shared helpers for disk-jockey. Bash 3.2 compatible (stock macOS bash).
 
-RD_OS="$(uname -s)"
+RD_OS="${RD_FORCE_OS:-$(uname -s)}"
 RD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RD_TARGETS="${RD_TARGETS:-$RD_DIR/../targets.conf}"
 
 is_mac() { [ "$RD_OS" = "Darwin" ]; }
+is_win() { case "$RD_OS" in MINGW* | MSYS* | CYGWIN*) return 0 ;; esac; return 1; }
+is_linux() { ! is_mac && ! is_win; }
+
+# Git for Windows reports C:/Users/...; Git Bash paths are /c/Users/... Normalize before comparing.
+norm_path() {
+  if is_win && have cygpath; then cygpath -u "$1"; else printf '%s' "$1"; fi
+}
+
+# Per-run scratch dir (process lists, Windows facts). Old ones are swept on each run.
+RD_TMP="${TMPDIR:-/tmp}/disk-jockey-$(id -u 2>/dev/null || echo 0)"
+mkdir -p "$RD_TMP" 2>/dev/null
+find "$RD_TMP" -type f -mmin +60 -exec rm -f {} + 2>/dev/null
 
 # Colors: on for an interactive terminal only, so agents reading through a pipe get plain text.
 # NO_COLOR=1 turns them off, FORCE_COLOR=1 forces them on. Truecolor when the terminal advertises it.
@@ -102,6 +114,19 @@ expand_paths() {
   IFS=$'\n'
   for part in "${parts[@]}"; do
     part="${part#"${part%%[![:space:]]*}"}"
+    case "$part" in
+      *%*%*)
+        # %LOCALAPPDATA%/... style (Windows only). Unset variables drop the path.
+        is_win || continue
+        local var val
+        var="${part#*%}"
+        var="${var%%%*}"
+        val=$(printenv "$var" 2>/dev/null)
+        [ -n "$val" ] || continue
+        val=$(norm_path "$val")
+        part="${part/"%$var%"/$val}"
+        ;;
+    esac
     part="${part/#\~/$HOME}"
     for m in $part; do
       if [ -e "$m" ] || [ -L "$m" ]; then printf '%s\n' "$m"; fi
@@ -164,10 +189,45 @@ safe_to_delete() {
   return 0
 }
 
+# Windows has no pgrep: one PowerShell call lists "PID Name CommandLine", cached for the run.
+win_procs() {
+  local f="$RD_TMP/procs.$$"
+  if [ ! -s "$f" ]; then
+    powershell.exe -NoProfile -NonInteractive -Command \
+      'Get-CimInstance Win32_Process | ForEach-Object { "{0} {1} {2}" -f $_.ProcessId, $_.Name, $_.CommandLine }' \
+      2>/dev/null | tr -d '\r' >"$f"
+  fi
+  cat "$f"
+}
+
+# Windows facts in one PowerShell call, as key=value lines (cached for the run).
+win_fact() { # key
+  local f="$RD_TMP/facts.$$"
+  if [ ! -s "$f" ]; then
+    powershell.exe -NoProfile -NonInteractive -Command '
+      $ErrorActionPreference = "SilentlyContinue"
+      $l = (Get-CimInstance Win32_Processor | Measure-Object LoadPercentage -Average).Average
+      if ($l -ne $null) { "cpu_load_pct=" + [int]$l }
+      "cpu_cores=" + (Get-CimInstance Win32_ComputerSystem).NumberOfLogicalProcessors
+      $h = Get-Item -Force ($env:SystemDrive + "\hiberfil.sys")
+      if ($h) { "hiberfil_kb=" + [int64]($h.Length / 1024) }
+      $p = Get-Item -Force ($env:SystemDrive + "\pagefile.sys")
+      if ($p) { "pagefile_kb=" + [int64]($p.Length / 1024) }
+    ' 2>/dev/null | tr -d '\r' >"$f"
+  fi
+  sed -n "s/^$1=//p" "$f" | head -n 1
+}
+
 # 0 if a process matches any of the comma-separated pgrep -f patterns.
 is_busy() {
   [ -n "$1" ] && [ "$1" != "-" ] || return 1
   local IFS=',' pat pid
+  if is_win; then
+    for pat in $1; do
+      win_procs | grep -Eq -- "$pat" && return 0
+    done
+    return 1
+  fi
   [ -n "${RD_ANCESTORS:-}" ] || RD_ANCESTORS=" $(rd_ancestors) "
   for pat in $1; do
     for pid in $(pgrep -f -- "$pat" 2>/dev/null); do
@@ -182,6 +242,10 @@ is_busy() {
 # Number of processes matching a pgrep -f pattern, excluding this script's ancestors.
 count_procs() {
   local pid n=0
+  if is_win; then
+    win_procs | grep -Ec -- "$1"
+    return 0
+  fi
   [ -n "${RD_ANCESTORS:-}" ] || RD_ANCESTORS=" $(rd_ancestors) "
   for pid in $(pgrep -f -- "$1" 2>/dev/null); do
     case "$RD_ANCESTORS" in *" $pid "*) continue ;; esac
@@ -207,7 +271,8 @@ each_target() {
       case "$os" in
         any) ;;
         mac) is_mac || continue ;;
-        linux) is_mac && continue ;;
+        linux) is_linux || continue ;;
+        win) is_win || continue ;;
         *) continue ;;
       esac
       printf '%s|%s|%s|%s|%s|%s|%s\n' "$tier" "$id" "$os" "$paths" "$action" "$busy" "$note"
@@ -267,6 +332,7 @@ process_cwds() {
 # Sets $cwds for a script, or stops --apply when processes can't be inspected.
 # RD_SKIP_INUSE_CHECK=1 overrides (the user accepts the risk).
 load_cwds() { # apply-flag
+  # Windows: /proc only sees Git Bash processes. Native apps are caught by win_dir_free() at --apply.
   cwds=$(process_cwds)
   if [ $? -eq 3 ]; then
     cwds=""
@@ -284,6 +350,23 @@ dir_in_use() {
   printf '%s\n' "$2" | awk -v w="$1" '$0==w || index($0, w"/")==1 {f=1} END{exit !f}'
 }
 
+# Windows refuses to rename a folder while any process has it (or anything inside) open or as its
+# working directory. Renaming there and back is a no-admin, no-dependency in-use test.
+# Retries because antivirus and indexers briefly hold files; a false "in use" only means "skip".
+win_dir_free() {
+  local d="$1" tmp="$1.dj-probe.$$" i
+  for i in 1 2 3; do
+    if mv -- "$d" "$tmp" 2>/dev/null; then
+      if mv -- "$tmp" "$d" 2>/dev/null; then return 0; fi
+      log "WARNING: renamed $d to $tmp while checking it and could not rename it back. Rename it manually."
+      return 1
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+
 # Category used by the interactive mode, derived from the target id.
 category_of() {
   case "$1" in
@@ -297,7 +380,8 @@ category_of() {
     brew-*) echo "Homebrew" ;;
     agent-state | claude-*) echo "Agents" ;;
     docker-* | podman-*) echo "Containers" ;;
-    snap-* | flatpak-* | journal* | apt-* | dnf-* | pacman-* | thumbnails) echo "System" ;;
+    snap-* | flatpak-* | journal* | apt-* | dnf-* | pacman-* | thumbnails | win-* | wsl-*) echo "System" ;;
+    nuget-*) echo ".NET" ;;
     *) echo "Other" ;;
   esac
 }
