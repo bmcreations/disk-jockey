@@ -72,3 +72,30 @@ render(f"{A}/worktrees.svg", "worktrees.sh", [
     [("d", "Dry run. Re-run with --apply to remove REMOVABLE and prune STALE-REF.")],
 ], width=1080, desc="Example worktree audit: clean merged worktrees are removable; dirty, unpushed, active and in-use ones are kept.")
 print("ok")
+
+
+def djrow(n, mark, cat, safe, reb, keep):
+    mc = {"[x]": "g", "[+]": "y", "[ ]": "d", " - ": "d"}[mark]
+    catc = "d" if mark == " - " else "t"
+    return [("t", f"  {n:>2}  "), (mc, f"{mark}  "), (catc, f"{cat:<20} "), ("g", f"{safe:<9} "), ("y", f"{reb:<9} "), ("d", keep)]
+
+render(f"{A}/dj.svg", "dj.sh", [
+    [("p", "$ "), ("t", "scripts/dj.sh")],
+    [],
+    ["P", ("p", "  (o)  "), ("w", "disk-jockey   "), ("d", "free 2.5G")],
+    [],
+    ["P", ("p", "2/4  "), ("w", "Pick what to clear")],
+    [],
+    [("d", f"{'':<11}"), ("d", f"{'CATEGORY':<21}"), ("d", f"{'SAFE':<10}"), ("d", f"{'REBUILD':<10}"), ("d", "KEEP")],
+    djrow(1, "[x]", "Xcode & Simulators", "41.2G", "16.0G", "51.4G"),
+    djrow(2, "[+]", "Android & JVM", "9.8G", "27.0G", "51.0G"),
+    djrow(3, "[x]", "JavaScript", "2.9G", "-", "-"),
+    djrow(4, "[ ]", "Python & ML", "1.1G", "-", "18.2G"),
+    djrow(5, "[x]", "Homebrew", "tool", "-", "-"),
+    djrow(6, " - ", "Agents", "-", "-", "15.0G"),
+    [],
+    ["P", ("t", "  Selected: "), ("g", "80.9G")],
+    [("d", "  [x] safe caches   [+] safe + rebuild cost   KEEP is report-only and never deleted")],
+    [("d", "  Type a number to cycle it, a = all safe, r = all incl. rebuild, Enter = continue")],
+    [("t", "  > ")],
+], width=900, desc="Interactive mode: categories with safe, rebuild-cost and report-only sizes; numbers toggle what to clear.")

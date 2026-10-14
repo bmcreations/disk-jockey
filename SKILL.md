@@ -20,6 +20,10 @@ All scripts are in `scripts/`, read-only by default, and need only bash 3.2+ (st
 - **Never `git worktree remove --force` or delete branches** unless the user names the worktree or branch and accepts losing its uncommitted changes.
 - Protected regardless of config: `~/.android/debug.keystore`, `~/.gradle/gradle.properties` (signing secrets), `~/.ssh`, `~/.gnupg`, Keychains, provisioning profiles, agent settings and skills. Directories containing them are protected too.
 
+## Interactive mode is for humans
+
+`scripts/dj.sh` is a guided, colorful version of this whole workflow for a person at a terminal. It refuses to run without one. When the user wants to drive cleanup themselves, tell them to run `~/.claude/skills/disk-jockey/scripts/dj.sh` in their own terminal. As an agent, use the individual scripts below; their output is plain text when piped.
+
 ## Workflow
 
 ### 1. Pre-flight: is it really files?

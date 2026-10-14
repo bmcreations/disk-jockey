@@ -80,7 +80,7 @@ is_artifact() { # path
   esac
 }
 
-printf '%-8s %s\n' SIZE PATH
+printf '%s%-8s %s%s\n' "$C_DIM" SIZE PATH "$C_0"
 while IFS= read -r proj; do
   [ -n "$proj" ] || continue
   last=$(git -C "$proj" log -1 --format=%ct 2>/dev/null)
@@ -104,7 +104,7 @@ while IFS= read -r proj; do
     kb=$(printf '%s\n' "$a" | size_kb)
     [ "$kb" -gt 0 ] || continue
     total=$((total + kb))
-    printf '%-8s %s\n' "$(human "$kb")" "$a"
+    printf '%s %s\n' "$(paint "$C_B" 8 "$(human "$kb")")" "$(tilde "$a")"
     [ "$apply" = 1 ] && rm -rf -- "$a"
   done < <(find "$proj" -mindepth 1 -name .git -prune -o -type d \( -name node_modules -o -name build -o -name .gradle \
     -o -name .cxx -o -name .kotlin -o -name DerivedData -o -name .build -o -name Pods -o -name target -o -name .next \
@@ -113,7 +113,7 @@ done < <(find_projects)
 
 echo
 if [ "$apply" = 1 ]; then
-  echo "Removed $(human "$total") of build outputs from projects idle >= ${days}d."
+  echo "$C_B${C_G}Removed $(human "$total")$C_0 of build outputs from projects idle >= ${days}d."
 else
-  echo "Would remove $(human "$total") from projects idle >= ${days}d. Re-run with --apply."
+  echo "$C_B${C_G}Would remove $(human "$total")$C_0 from projects idle >= ${days}d. Re-run with --apply."
 fi

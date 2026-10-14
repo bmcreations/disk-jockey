@@ -15,7 +15,7 @@ while IFS='|' read -r tier id os paths action busy note; do
   case "$action" in
     cmd:*)
       c="${action#cmd:}"
-      have "${c%% *}" || continue
+      tool_ready "${c%% *}" || continue
       ;;
   esac
   kb=$(target_matches "$paths" "$action" | size_kb)
@@ -34,12 +34,15 @@ if [ "$fmt" = tsv ]; then
   exit 0
 fi
 
-printf 'Free: %s on %s\n\n' "$(human "$free")" "$HOME"
-printf '%-4s %-8s %-24s %-6s %s\n' TIER SIZE ID STATUS NOTE
+printf 'Free: %s%s%s on %s\n\n' "$C_B" "$(human "$free")" "$C_0" "~"
+printf '%s%-4s %-8s %-24s %-6s %s%s\n' "$C_DIM" TIER SIZE ID STATUS NOTE "$C_0"
 sort -t$'\t' -k1,1nr "$tmp" | while IFS=$'\t' read -r kb tier id status note; do
   sz=$(human "$kb")
   [ "$kb" -eq 0 ] && sz="(tool)"
-  printf '%-4s %-8s %-24s %-6s %s\n' "$tier" "$sz" "$id" "$status" "$note"
+  case "$tier" in 1) tc="$C_G" ;; 2) tc="$C_Y" ;; *) tc="$C_M" ;; esac
+  sc=""
+  [ "$status" = busy ] && sc="$C_Y"
+  printf '%s %s %s %s %s\n' "$(paint "$C_B$tc" 4 "$tier")" "$(paint "$C_B" 8 "$sz")" "$(paint "" 24 "$id")" "$(paint "$sc" 6 "$status")" "$C_DIM$note$C_0"
 done
 
 echo
@@ -50,9 +53,10 @@ for t in 1 2 3; do
     2) label="tier 2 (re-download/rebuild cost)" ;;
     3) label="tier 3 (report only, human decides)" ;;
   esac
-  printf '%-38s %s\n' "$label" "$(human "$tot")"
+  case $t in 1) tc="$C_G" ;; 2) tc="$C_Y" ;; *) tc="$C_M" ;; esac
+  printf '%s %s%s%s\n' "$(paint "$tc" 38 "$label")" "$C_B" "$(human "$tot")" "$C_0"
 done
 
 echo
-echo "Free space dropping on its own, or less freed than expected? Run preflight.sh (swap, simulators, snapshots)."
-echo "Next: worktrees.sh (agent worktrees) and sweep.sh (build outputs in idle projects)."
+echo "${C_DIM}Free space dropping on its own, or less freed than expected? Run preflight.sh (swap, simulators, snapshots).$C_0"
+echo "${C_DIM}Next: worktrees.sh (agent worktrees) and sweep.sh (build outputs in idle projects).$C_0"

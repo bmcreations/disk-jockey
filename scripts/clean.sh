@@ -43,7 +43,9 @@ fi
 
 mode=DRY-RUN
 [ "$apply" = 1 ] && mode=APPLY
-say "[$mode] $(date '+%Y-%m-%d %H:%M') tiers <= $max_tier, free $(human "$before")"
+mc="$C_C"
+[ "$apply" = 1 ] && mc="$C_P"
+say "${C_B}${mc}[$mode]$C_0 $(date '+%Y-%m-%d %H:%M') tiers <= $max_tier, free $(human "$before")"
 
 planned=0 failures=0
 while IFS='|' read -r tier id os paths action busy note; do
@@ -55,14 +57,14 @@ while IFS='|' read -r tier id os paths action busy note; do
   case "$action" in
     cmd:*)
       c="${action#cmd:}"
-      have "${c%% *}" || continue
-      if is_busy "$busy"; then say "  skip  $id (busy: matches '$busy')"; continue; fi
+      tool_ready "${c%% *}" || continue
+      if is_busy "$busy"; then say "  ${C_Y}skip$C_0  $id ${C_DIM}(busy: matches '$busy')$C_0"; continue; fi
       kb=$(expand_paths "$paths" | size_kb)
       planned=$((planned + kb))
-      say "  run   $id: $c  (~$(human "$kb"))"
+      say "  ${C_C}run$C_0   $id: $c  $C_DIM(~$(human "$kb"))$C_0"
       if [ "$apply" = 1 ]; then
         if ! eval "$c" </dev/null >/dev/null 2>&1; then
-          say "        failed: $c"
+          say "        ${C_R}failed:$C_0 $c"
           failures=$((failures + 1))
         fi
       fi
@@ -70,18 +72,18 @@ while IFS='|' read -r tier id os paths action busy note; do
     *)
       matches=$(target_matches "$paths" "$action")
       [ -n "$matches" ] || continue
-      if is_busy "$busy"; then say "  skip  $id (busy: matches '$busy')"; continue; fi
+      if is_busy "$busy"; then say "  ${C_Y}skip$C_0  $id ${C_DIM}(busy: matches '$busy')$C_0"; continue; fi
       while IFS= read -r m; do
         [ -n "$m" ] || continue
         if ! safe_to_delete "$m"; then
-          say "  guard $m (protected path or symlink, skipped)"
+          say "  ${C_M}guard$C_0 $(tilde "$m") ${C_DIM}(protected path or symlink, skipped)$C_0"
           continue
         fi
         kb=$(printf '%s\n' "$m" | size_kb)
         planned=$((planned + kb))
-        say "  rm    $(human "$kb")  $m  [$id]"
+        say "  ${C_P}rm$C_0    $C_B$(human "$kb")$C_0  $(tilde "$m")  ${C_DIM}[$id]$C_0"
         if [ "$apply" = 1 ]; then
-          rm -rf -- "$m" 2>/dev/null || { say "        failed: $m"; failures=$((failures + 1)); }
+          rm -rf -- "$m" 2>/dev/null || { say "        ${C_R}failed:$C_0 $(tilde "$m")"; failures=$((failures + 1)); }
         fi
       done <<EOF
 $matches
@@ -93,12 +95,12 @@ done < <(each_target)
 if [ "$apply" = 1 ]; then
   after=$(free_kb)
   freed=$((after - before))
-  say "Freed $(human "$freed") (estimated $(human "$planned")). Free now $(human "$after")."
+  say "${C_B}${C_G}Freed $(human "$freed")$C_0 (estimated $(human "$planned")). Free now $(human "$after")."
   if is_mac && [ "$freed" -lt $((planned / 2)) ]; then
-    say "Less than expected: APFS snapshots or purgeable space may be holding it. Check: tmutil listlocalsnapshots /"
+    say "${C_Y}Less than expected:$C_0 APFS snapshots or purgeable space may be holding it. Check: tmutil listlocalsnapshots /"
   fi
   [ "$failures" -gt 0 ] && exit 1
 else
-  say "Would reclaim ~$(human "$planned"). Re-run with --apply to delete."
+  say "${C_B}${C_G}Would reclaim ~$(human "$planned").$C_0 Re-run with --apply to delete."
 fi
 exit 0

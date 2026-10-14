@@ -6,7 +6,7 @@
   <img src="https://img.shields.io/badge/macOS%20%7C%20Linux-111?style=flat-square&logo=apple&logoColor=white" alt="macOS and Linux">
   <img src="https://img.shields.io/badge/bash-3.2%2B-4EAA25?style=flat-square&logo=gnubash&logoColor=white" alt="bash 3.2+">
   <img src="https://img.shields.io/badge/Claude-skill-D97757?style=flat-square" alt="Claude skill">
-  <img src="https://img.shields.io/badge/tests-32%20passing-3FB950?style=flat-square" alt="32 tests passing">
+  <img src="https://img.shields.io/badge/tests-43%20passing-3FB950?style=flat-square" alt="43 tests passing">
   <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="MIT license">
 </p>
 
@@ -35,7 +35,13 @@ A generic "clear your caches" script finds none of that. disk-jockey checks for 
 git clone https://github.com/bmcreations/disk-jockey ~/.claude/skills/disk-jockey
 ```
 
-Then tell your agent *"my disk is full"*, or run it yourself:
+Then tell your agent *"my disk is full"*, or drive it yourself:
+
+```bash
+~/.claude/skills/disk-jockey/scripts/dj.sh
+```
+
+`dj.sh` walks you through four steps: preflight fixes, pick categories, review worktrees, apply. Prefer individual commands?
 
 ```bash
 cd ~/.claude/skills/disk-jockey
@@ -46,6 +52,10 @@ scripts/clean.sh              # dry run; add --apply to act
 ```
 
 ## See it work
+
+**Interactive mode.** Pick categories by number. Safe caches are preselected, rebuild-cost items are one more press, and report-only data can't be selected at all.
+
+<p align="center"><img src="assets/dj.svg" alt="dj.sh category picker showing safe, rebuild and keep sizes per category" width="85%"></p>
 
 **Step one is always: is it really files?**
 
@@ -61,6 +71,7 @@ scripts/clean.sh              # dry run; add --apply to act
 
 | Script | What it does |
 |---|---|
+| `dj.sh` | Interactive mode for humans: one-key preflight fixes, category picker, worktree and sweep prompts, before/after summary |
 | `preflight.sh` | Free space, load, swap, booted simulators, emulators, idle Gradle/Kotlin daemons, active builds, agent count, APFS snapshots, uptime |
 | `scan.sh` | Sizes 60+ known targets across Xcode, simulators, Android, Gradle, Kotlin/Native, Node, Python, Go, Rust, Homebrew, Docker and Playwright |
 | `worktrees.sh` | Audits every linked worktree, nested ones included. Detects squash-merged PRs with `gh` |
@@ -81,6 +92,7 @@ scripts/clean.sh              # dry run; add --apply to act
 - **Protected paths** can't be deleted, nor any folder containing them: `debug.keystore`, `gradle.properties` (signing secrets), `.ssh`, Keychains, provisioning profiles, agent settings.
 - **Busy checks.** A target is skipped while a process using it runs (`xcodebuild`, `GradleDaemon`, `qemu-system`).
 - **Symlinks** are never followed or deleted.
+- **Color** only on an interactive terminal. Agents reading through a pipe get plain text. `NO_COLOR=1` turns it off, `FORCE_COLOR=1` forces it.
 - **Worktrees** are removed only via `git worktree remove`, which itself refuses dirty trees. Branches are kept.
 - **Sweep** deletes a build folder only next to its build file, and never anything git tracks.
 

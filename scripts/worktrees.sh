@@ -65,7 +65,16 @@ recently_touched() {
 }
 
 report() { # state size branch path detail
-  printf '%-10s %-8s %-28s %s  %s\n' "$1" "$2" "$3" "$4" "$5"
+  local sc=""
+  case "$1" in
+    REMOVABLE) sc="$C_B$C_G" ;; REVIEW) sc="$C_B$C_Y" ;; ACTIVE) sc="$C_C" ;; IN-USE) sc="$C_M" ;;
+    LOCKED | STALE-REF) sc="$C_DIM" ;; STATE) sc="$C_DIM" ;;
+  esac
+  if [ "$1" = STATE ]; then
+    printf '%s%-10s %-8s %-28s %s  %s%s\n' "$C_DIM" "$1" "$2" "$3" "$4" "$5" "$C_0"
+  else
+    printf '%s %s %s %s  %s\n' "$(paint "$sc" 10 "$1")" "$(paint "$C_B" 8 "$2")" "$(paint "" 28 "$3")" "$C_DIM$(tilde "$4")$C_0" "$5"
+  fi
 }
 
 handle() { # repo wt head branch locked prunable main_head
@@ -104,12 +113,12 @@ handle() { # repo wt head branch locked prunable main_head
 
   if [ "$apply" = 1 ] && [ "$state" = REMOVABLE ]; then
     if git -C "$repo" worktree remove "$wt" 2>/dev/null; then
-      echo "           removed"
+      echo "           ${C_G}removed$C_0"
       if [ "$del_branches" = 1 ] && [ "$branch" != "(detached)" ]; then
-        git -C "$repo" branch -d "$branch" >/dev/null 2>&1 && echo "           deleted merged branch $branch"
+        git -C "$repo" branch -d "$branch" >/dev/null 2>&1 && echo "           ${C_G}deleted merged branch$C_0 $branch"
       fi
     else
-      echo "           git refused to remove it (left in place)"
+      echo "           ${C_Y}git refused to remove it (left in place)$C_0"
     fi
   fi
 }
@@ -144,5 +153,5 @@ while IFS= read -r repo; do
 done < <(find_repos)
 
 echo
-echo "$count linked worktree(s). Removable: $(human "$removable_kb")."
-[ "$apply" = 1 ] || echo "Dry run. Re-run with --apply to remove REMOVABLE and prune STALE-REF."
+echo "$count linked worktree(s). $C_B${C_G}Removable: $(human "$removable_kb").$C_0"
+[ "$apply" = 1 ] || echo "${C_DIM}Dry run. Re-run with --apply to remove REMOVABLE and prune STALE-REF.$C_0"

@@ -13,7 +13,9 @@ row() { # level item value advice
   if [ "$tsv" = 1 ]; then
     printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4"
   else
-    printf '%-5s %-22s %-18s %s\n' "$1" "$2" "$3" "$4"
+    local lc="$C_G"
+    case "$1" in WARN) lc="$C_Y" ;; INFO) lc="$C_C" ;; esac
+    printf '%s %s %s %s\n' "$(paint "$C_B$lc" 5 "$1")" "$(paint "" 22 "$2")" "$(paint "$C_B" 18 "$3")" "$C_DIM$4$C_0"
   fi
 }
 
@@ -109,9 +111,9 @@ fi
 if [ "$tsv" = 0 ]; then
   echo
   if [ "$warns" -gt 0 ]; then
-    echo "$warns warning(s). Resolve memory and snapshot warnings first: deleting files will not stop swap from refilling the disk."
+    echo "$C_B$C_Y$warns warning(s).$C_0 Resolve memory and snapshot warnings first: deleting files will not stop swap from refilling the disk."
   else
-    echo "No runaway processes or snapshots. Continue with scan.sh."
+    echo "${C_G}No runaway processes or snapshots.$C_0 Continue with scan.sh."
   fi
 fi
 exit 0

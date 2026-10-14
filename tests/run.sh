@@ -94,6 +94,31 @@ ok "preflight runs" 'bash "$S/preflight.sh" >/dev/null 2>&1'
 ok "guard warns under threshold" 'bash "$S/disk-guard.sh" 999999G | grep -q "LOW DISK"'
 ok "guard silent above threshold" '[ -z "$(bash "$S/disk-guard.sh" 1K)" ]'
 
+echo "== colors"
+esc=$(printf '\033[')
+ok "plain text when piped" '! bash "$S/preflight.sh" | grep -qF "$esc"'
+ok "FORCE_COLOR adds color" 'FORCE_COLOR=1 bash "$S/preflight.sh" | grep -qF "$esc"'
+ok "NO_COLOR wins over FORCE_COLOR" '! NO_COLOR=1 FORCE_COLOR=1 bash "$S/preflight.sh" | grep -qF "$esc"'
+strip_ansi() { sed "s/$(printf '\033')\[[0-9;]*m//g"; }
+ok "columns stay aligned with color" '[ "$(FORCE_COLOR=1 bash "$S/preflight.sh" | strip_ansi | head -1)" = "$(bash "$S/preflight.sh" | head -1)" ]'
+
+echo "== dj.sh (interactive)"
+blob "$HOME/.gradle/caches/build-cache-1"
+blob "$HOME/.gradle/caches/modules-2"
+(cd "$R/app" && g worktree add .claude/worktrees/dj -b agent/dj)
+blob "$R/app/app/build"   # ensures the sweep prompt appears, so the scripted answers stay in order
+find "$R" -exec touch -h -d '30 days ago' {} + 2>/dev/null
+ok "refuses to run without a terminal" '! bash "$S/dj.sh" </dev/null >/dev/null 2>&1'
+printf 'q\n' | RD_ALLOW_PIPE=1 bash "$S/dj.sh" >/dev/null 2>&1
+ok "q quits without changes" '[ -d "$HOME/.gradle/caches/build-cache-1" ] && [ -d "$R/app/.claude/worktrees/dj" ]'
+# Enter = accept preselected safe caches, y = remove worktrees, n = skip sweep, y = go, n = no schedule
+printf '\ny\nn\ny\nn\n' | RD_ALLOW_PIPE=1 bash "$S/dj.sh" >/dev/null 2>&1
+ok "preselected safe cache cleared" '[ ! -e "$HOME/.gradle/caches/build-cache-1" ]'
+ok "rebuild-cost cache kept unless chosen" '[ -d "$HOME/.gradle/caches/modules-2" ]'
+ok "confirmed worktree removed" '[ ! -e "$R/app/.claude/worktrees/dj" ]'
+ok "dirty worktree still kept" '[ -f "$R/app/$W/dirty/new.txt" ]'
+ok "keystore still kept" '[ -f "$HOME/.android/debug.keystore" ]'
+
 echo
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

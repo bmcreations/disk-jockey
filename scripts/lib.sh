@@ -6,6 +6,32 @@ RD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RD_TARGETS="${RD_TARGETS:-$RD_DIR/../targets.conf}"
 
 is_mac() { [ "$RD_OS" = "Darwin" ]; }
+
+# Colors: on for an interactive terminal only, so agents reading through a pipe get plain text.
+# NO_COLOR=1 turns them off, FORCE_COLOR=1 forces them on. Truecolor when the terminal advertises it.
+C_0='' C_B='' C_DIM='' C_G='' C_Y='' C_R='' C_C='' C_M='' C_P=''
+if { [ -t 1 ] || [ -n "${FORCE_COLOR:-}" ]; } && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-}" != dumb ]; then
+  _e=$'\033['
+  C_0="${_e}0m" C_B="${_e}1m"
+  case "${COLORTERM:-}" in
+    truecolor | 24bit)
+      C_DIM="${_e}38;2;139;148;158m" C_G="${_e}38;2;63;185;80m" C_Y="${_e}38;2;227;179;65m"
+      C_R="${_e}38;2;255;123;114m" C_C="${_e}38;2;121;192;255m" C_M="${_e}38;2;210;168;255m" C_P="${_e}38;2;255;77;141m"
+      ;;
+    *)
+      C_DIM="${_e}2m" C_G="${_e}32m" C_Y="${_e}33m" C_R="${_e}31m" C_C="${_e}36m" C_M="${_e}35m" C_P="${_e}95m"
+      ;;
+  esac
+fi
+
+# Display form of a path: $HOME shown as ~.
+# shellcheck disable=SC2088  # literal ~ is intended for display
+tilde() { case "$1" in "$HOME"/*) printf '~/%s' "${1#"$HOME"/}" ;; *) printf '%s' "$1" ;; esac; }
+
+# paint COLOR WIDTH TEXT: pad first, then color, so escape codes never break column alignment.
+paint() {
+  if [ -n "$1" ]; then printf '%s%-*s%s' "$1" "$2" "$3" "$C_0"; else printf '%-*s' "$2" "$3"; fi
+}
 have() { command -v "$1" >/dev/null 2>&1; }
 log() { printf '%s\n' "$*" >&2; }
 
@@ -40,6 +66,12 @@ size_kb() {
     t=$((t + ${s:-0}))
   done
   echo "$t"
+}
+
+# 0 if the tool behind a cmd: target can run now (installed, and for docker, daemon reachable).
+tool_ready() {
+  have "$1" || return 1
+  case "$1" in docker) docker info >/dev/null 2>&1 ;; esac
 }
 
 # Expand a comma-separated path field (~ and globs, spaces allowed). Prints existing matches.
@@ -204,3 +236,21 @@ process_cwds() {
 dir_in_use() {
   printf '%s\n' "$2" | awk -v w="$1" '$0==w || index($0, w"/")==1 {f=1} END{exit !f}'
 }
+
+# Category used by the interactive mode, derived from the target id.
+category_of() {
+  case "$1" in
+    xcode-* | xctest-* | sim-* | simulators | coresim-* | swift* | cocoapods-*) echo "Xcode & Simulators" ;;
+    android-* | avd-* | gradle-* | kotlin-* | konan-* | maven-*) echo "Android & JVM" ;;
+    npm-* | pnpm-* | yarn-* | bun-*) echo "JavaScript" ;;
+    pip-* | uv-* | ml-models) echo "Python & ML" ;;
+    go-* | cargo-*) echo "Go & Rust" ;;
+    docker-*) echo "Docker" ;;
+    playwright-* | puppeteer-*) echo "Browsers" ;;
+    brew-*) echo "Homebrew" ;;
+    agent-state | claude-*) echo "Agents" ;;
+    *) echo "Other" ;;
+  esac
+}
+
+strip_ansi() { sed "s/$(printf '\033')\[[0-9;]*m//g"; }
