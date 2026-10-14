@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 330" width="1200" height="330" role="img" aria-labelledby="t d">
+  <title id="t">How disk-jockey works</title>
+  <desc id="d">Five steps in order: preflight checks memory and snapshots, scan sizes caches by tier, worktrees audits agent worktrees, clean removes tiered caches, sweep clears build outputs in idle projects. A loop back shows prevention with a scheduled cleanup and an agent guard hook.</desc>
+  <style>
+    .bg { fill: #FFFFFF; }
+    .card { fill: #F6F4FB; stroke: #E3DEF3; }
+    .ink { fill: #14141F; }
+    .muted { fill: #5B5B6B; }
+    .line { stroke: #B9B2D6; }
+    .arrow { fill: #B9B2D6; }
+    @media (prefers-color-scheme: dark) {
+      .bg { fill: #0D1117; }
+      .card { fill: #161B2E; stroke: #2A3050; }
+      .ink { fill: #F2F2F7; }
+      .muted { fill: #A1A1B5; }
+      .line { stroke: #3B4270; }
+      .arrow { fill: #3B4270; }
+    }
+    .h { font: 700 19px ui-monospace, SFMono-Regular, Menlo, Consolas, "DejaVu Sans Mono", monospace; }
+    .s { font: 400 14px system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+    .n { font: 800 13px system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; fill: #fff; }
+  </style>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" class="arrow"/>
+    </marker>
+  </defs>
+  <rect class="bg" width="1200" height="330" rx="20"/>
+
+  <!-- connectors -->
+  <g class="line" stroke-width="2.5" fill="none" marker-end="url(#ah)">
+    <line x1="222" y1="110" x2="246" y2="110"/>
+    <line x1="458" y1="110" x2="482" y2="110"/>
+    <line x1="694" y1="110" x2="718" y2="110"/>
+    <line x1="930" y1="110" x2="954" y2="110"/>
+    <path d="M 1060 182 L 1060 262 L 140 262 L 140 190" stroke-dasharray="6 6"/>
+  </g>
+
+  <!-- cards: x = 20, 250, 485, 720, 955 ; width 200 -->
+  <g>
+    <rect class="card" x="20" y="40" width="200" height="140" rx="16" stroke-width="1.5"/>
+    <circle cx="48" cy="68" r="13" fill="#FF4D8D"/><text class="n" x="48" y="73" text-anchor="middle">1</text>
+    <text class="h ink" x="70" y="75">preflight</text>
+    <text class="s muted" x="36" y="112">Is it really files?</text>
+    <text class="s muted" x="36" y="134">Swap, sims, daemons,</text>
+    <text class="s muted" x="36" y="156">snapshots.</text>
+  </g>
+  <g>
+    <rect class="card" x="250" y="40" width="200" height="140" rx="16" stroke-width="1.5"/>
+    <circle cx="278" cy="68" r="13" fill="#F97316"/><text class="n" x="278" y="73" text-anchor="middle">2</text>
+    <text class="h ink" x="300" y="75">scan</text>
+    <text class="s muted" x="266" y="112">60+ known caches,</text>
+    <text class="s muted" x="266" y="134">sized and grouped</text>
+    <text class="s muted" x="266" y="156">into 3 tiers.</text>
+  </g>
+  <g>
+    <rect class="card" x="485" y="40" width="200" height="140" rx="16" stroke-width="1.5"/>
+    <circle cx="513" cy="68" r="13" fill="#F5B700"/><text class="n" x="513" y="73" text-anchor="middle">3</text>
+    <text class="h ink" x="535" y="75">worktrees</text>
+    <text class="s muted" x="501" y="112">Finds agent worktrees,</text>
+    <text class="s muted" x="501" y="134">keeps anything dirty,</text>
+    <text class="s muted" x="501" y="156">unpushed or in use.</text>
+  </g>
+  <g>
+    <rect class="card" x="720" y="40" width="200" height="140" rx="16" stroke-width="1.5"/>
+    <circle cx="748" cy="68" r="13" fill="#22C55E"/><text class="n" x="748" y="73" text-anchor="middle">4</text>
+    <text class="h ink" x="770" y="75">clean</text>
+    <text class="s muted" x="736" y="112">Tiered caches. Dry run</text>
+    <text class="s muted" x="736" y="134">first, skips anything a</text>
+    <text class="s muted" x="736" y="156">running tool is using.</text>
+  </g>
+  <g>
+    <rect class="card" x="955" y="40" width="210" height="140" rx="16" stroke-width="1.5"/>
+    <circle cx="983" cy="68" r="13" fill="#22D3EE"/><text class="n" x="983" y="73" text-anchor="middle">5</text>
+    <text class="h ink" x="1005" y="75">sweep</text>
+    <text class="s muted" x="971" y="112">build/, node_modules,</text>
+    <text class="s muted" x="971" y="134">.gradle in idle projects.</text>
+    <text class="s muted" x="971" y="156">Never git-tracked files.</text>
+  </g>
+
+  <!-- prevent loop label -->
+  <rect class="card" x="455" y="240" width="290" height="44" rx="22" stroke-width="1.5"/>
+  <text class="h ink" x="600" y="268" text-anchor="middle" style="font-size:15px">prevent: schedule + guard hook</text>
+</svg>

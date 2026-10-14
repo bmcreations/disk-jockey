@@ -1,0 +1,101 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 420" width="1280" height="420" role="img" aria-labelledby="t d">
+  <title id="t">disk-jockey</title>
+  <desc id="d">A spinning vinyl record next to the title disk-jockey and the tagline: spins down your simulators, drops your stale tracks, and keeps the dance floor clear.</desc>
+  <style>
+    .bg { fill: #FBF7F2; }
+    .ink { fill: #14141F; }
+    .muted { fill: #5B5B6B; }
+    .chip { fill: #EFE9FF; }
+    .chiptext { fill: #6D28D9; }
+    .arm { stroke: #8A8A99; }
+    .armhead { fill: #8A8A99; }
+    @media (prefers-color-scheme: dark) {
+      .bg { fill: #0E1020; }
+      .ink { fill: #F2F2F7; }
+      .muted { fill: #A1A1B5; }
+      .chip { fill: #1E2140; }
+      .chiptext { fill: #C4B5FD; }
+      .arm { stroke: #6B6B80; }
+      .armhead { fill: #6B6B80; }
+    }
+    .spin { transform-origin: 230px 210px; animation: spin 6s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .eq rect { transform-box: fill-box; transform-origin: 50% 100%; animation: eq 1.6s ease-in-out infinite alternate; }
+    .eq rect:nth-child(3n) { animation-duration: 1.1s; }
+    .eq rect:nth-child(3n+1) { animation-duration: 1.9s; animation-delay: -0.4s; }
+    .eq rect:nth-child(4n) { animation-duration: 1.3s; animation-delay: -0.8s; }
+    @keyframes eq { from { transform: scaleY(0.35); } to { transform: scaleY(1); } }
+    @media (prefers-reduced-motion: reduce) { .spin, .eq rect { animation: none; } }
+    .title { font: 800 84px ui-monospace, SFMono-Regular, Menlo, Consolas, "DejaVu Sans Mono", monospace; letter-spacing: -2px; }
+    .tag { font: 400 25px system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+    .chipfont { font: 600 16px ui-monospace, SFMono-Regular, Menlo, Consolas, "DejaVu Sans Mono", monospace; }
+    .label { font: 700 13px ui-monospace, SFMono-Regular, Menlo, Consolas, "DejaVu Sans Mono", monospace; fill: #ffffff; letter-spacing: 1px; }
+  </style>
+  <defs>
+    <linearGradient id="lab" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FF4D8D"/>
+      <stop offset="1" stop-color="#F5B700"/>
+    </linearGradient>
+    <linearGradient id="bars" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#22D3EE"/>
+      <stop offset="1" stop-color="#FF4D8D"/>
+    </linearGradient>
+    <radialGradient id="vinyl" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0.35" stop-color="#1a1a22"/>
+      <stop offset="1" stop-color="#07070b"/>
+    </radialGradient>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1280" height="420" rx="28"/>
+
+  <!-- record -->
+  <circle cx="230" cy="210" r="168" fill="url(#vinyl)"/>
+  <g class="spin">
+    <g fill="none" stroke="#2b2b36" stroke-width="1.2">
+      <circle cx="230" cy="210" r="155"/><circle cx="230" cy="210" r="143"/>
+      <circle cx="230" cy="210" r="131"/><circle cx="230" cy="210" r="119"/>
+      <circle cx="230" cy="210" r="107"/><circle cx="230" cy="210" r="95"/>
+      <circle cx="230" cy="210" r="83"/><circle cx="230" cy="210" r="71"/>
+    </g>
+    <circle cx="230" cy="210" r="58" fill="url(#lab)"/>
+    <text class="label" x="230" y="196" text-anchor="middle">DISK</text>
+    <text class="label" x="230" y="236" text-anchor="middle">JOCKEY</text>
+    <rect x="226" y="150" width="8" height="8" rx="2" fill="#ffffff" opacity="0.85"/>
+  </g>
+  <circle cx="230" cy="210" r="6" class="bg"/>
+  <path d="M 120 110 A 150 150 0 0 1 220 62" fill="none" stroke="#ffffff" stroke-opacity="0.18" stroke-width="10" stroke-linecap="round"/>
+
+  <!-- tonearm -->
+  <circle cx="425" cy="58" r="16" class="armhead"/>
+  <line x1="425" y1="58" x2="362" y2="170" class="arm" stroke-width="9" stroke-linecap="round"/>
+  <rect x="340" y="164" width="34" height="20" rx="4" class="armhead" transform="rotate(30 357 174)"/>
+
+  <!-- title -->
+  <text class="title ink" x="470" y="170">disk-jockey</text>
+  <text class="tag muted" x="474" y="218">Spins down your simulators,</text>
+  <text class="tag muted" x="474" y="250">drops your stale tracks,</text>
+  <text class="tag muted" x="474" y="282">keeps the dance floor clear.</text>
+
+  <!-- chips -->
+  <g class="chipfont">
+    <rect class="chip" x="474" y="314" width="73" height="34" rx="17"/><text class="chiptext" x="510.5" y="336" text-anchor="middle">Xcode</text>
+    <rect class="chip" x="557" y="314" width="82" height="34" rx="17"/><text class="chiptext" x="598" y="336" text-anchor="middle">Gradle</text>
+    <rect class="chip" x="649" y="314" width="118" height="34" rx="17"/><text class="chiptext" x="708" y="336" text-anchor="middle">Simulators</text>
+    <rect class="chip" x="777" y="314" width="109" height="34" rx="17"/><text class="chiptext" x="831.5" y="336" text-anchor="middle">Worktrees</text>
+    <rect class="chip" x="896" y="314" width="64" height="34" rx="17"/><text class="chiptext" x="928" y="336" text-anchor="middle">Swap</text>
+  </g>
+
+  <!-- equalizer -->
+  <g class="eq" fill="url(#bars)">
+    <rect x="1066" y="250" width="11" height="110" rx="3"/>
+    <rect x="1083" y="200" width="11" height="160" rx="3"/>
+    <rect x="1100" y="270" width="11" height="90" rx="3"/>
+    <rect x="1117" y="180" width="11" height="180" rx="3"/>
+    <rect x="1134" y="230" width="11" height="130" rx="3"/>
+    <rect x="1151" y="290" width="11" height="70" rx="3"/>
+    <rect x="1168" y="210" width="11" height="150" rx="3"/>
+    <rect x="1185" y="260" width="11" height="100" rx="3"/>
+    <rect x="1202" y="190" width="11" height="170" rx="3"/>
+    <rect x="1219" y="280" width="11" height="80" rx="3"/>
+  </g>
+</svg>
