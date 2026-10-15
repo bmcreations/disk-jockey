@@ -1,0 +1,10 @@
+name: probe
+on:
+  push:
+    branches: ["debug/**"]
+jobs:
+  probe:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: /bin/bash tests/probe32.sh | while IFS= read -r l; do echo "::error::$l"; done
