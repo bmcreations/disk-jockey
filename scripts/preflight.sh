@@ -187,7 +187,7 @@ else
   boot=$(($(date +%s) - $(awk '{printf "%d", $1}' /proc/uptime 2>/dev/null)))
 fi
 if [ -n "$boot" ]; then
-  days=$((($(date +%s) - boot) / 86400))
+  days=$(( ($(date +%s) - boot) / 86400 ))
   [ "$days" -ge 7 ] && row WARN uptime "${days}d" "Reboot clears swap files and temp folders." || row OK uptime "${days}d" ""
 fi
 

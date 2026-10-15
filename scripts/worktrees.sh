@@ -11,6 +11,10 @@ Usage: worktrees.sh [options] [root ...]
   --depth N                  how deep to look for repos under each root (default 5)
   --apply                    remove REMOVABLE worktrees and prune STALE-REF entries
   --delete-merged-branches   with --apply, also `git branch -d` the worktree's branch (refuses unmerged)
+  --select PATH              act only on these worktrees (repeatable). A selected REVIEW worktree is
+                             removed too, discarding its uncommitted changes; its commits stay on its branch.
+                             IN-USE, LOCKED and ACTIVE worktrees are never removed.
+  --tsv                      machine-readable: state, KB, branch, path, uncommitted, local commits, detail
 Roots default to ~/code ~/dev ~/src ~/Projects ~/Developer ... or $RD_ROOTS (colon-separated).
 
 States
@@ -23,14 +27,16 @@ States
 EOF
 }
 
-idle_days=3 depth=5 apply=0 del_branches=0
-roots=()
+idle_days=3 depth=5 apply=0 del_branches=0 tsv=0
+roots=() selects=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --idle-days) idle_days="$2"; shift ;;
     --depth) depth="$2"; shift ;;
     --apply) apply=1 ;;
     --delete-merged-branches) del_branches=1 ;;
+    --select) selects+=("$(norm_path "$2")"); shift ;;
+    --tsv) tsv=1 ;;
     -h | --help) usage; exit 0 ;;
     -*) log "unknown argument: $1"; usage; exit 2 ;;
     *) roots+=("$1") ;;
@@ -65,7 +71,14 @@ recently_touched() {
   [ -n "$hit" ]
 }
 
+is_selected() {
+  local p
+  for p in "${selects[@]}"; do [ "$p" = "$1" ] && return 0; done
+  return 1
+}
+
 report() { # state size branch path detail
+  [ "$tsv" = 1 ] && return 0
   local sc=""
   case "$1" in
     REMOVABLE) sc="$C_B$C_G" ;; REVIEW) sc="$C_B$C_Y" ;; ACTIVE) sc="$C_C" ;; IN-USE) sc="$C_M" ;;
@@ -113,10 +126,42 @@ handle() { # repo wt head branch locked prunable main_head
     removable_kb=$((removable_kb + kb))
   fi
   report "$state" "$sz" "$branch" "$wt" "$detail"
+  [ "$tsv" = 1 ] && printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$state" "$kb" "$branch" "$wt" "$dirty" "$uniq" "$detail"
 
-  if [ "$apply" = 1 ] && [ "$state" = REMOVABLE ]; then
-    if git -C "$repo" worktree remove "$wt" 2>/dev/null; then
-      echo "           ${C_G}removed$C_0"
+  # What --apply acts on: REMOVABLE by default; with --select, exactly the selected REMOVABLE/REVIEW ones.
+  local act=0 force=""
+  if [ "${#selects[@]}" -gt 0 ]; then
+    if is_selected "$wt"; then
+      case "$state" in
+        REMOVABLE) act=1 ;;
+        REVIEW)
+          if [ "$branch" = "(detached)" ] && [ "$uniq" != 0 ]; then
+            # No branch holds these commits; removing the worktree would orphan them.
+            [ "$apply" = 1 ] && echo "           ${C_Y}detached with $uniq local commit(s) on no branch, left in place$C_0"
+          else
+            act=1; force="--force"
+          fi
+          ;;
+        *) [ "$apply" = 1 ] && echo "           ${C_Y}selected but $state, left in place$C_0" ;;
+      esac
+    fi
+  elif [ "$state" = REMOVABLE ]; then
+    act=1
+  fi
+  # Windows: REVIEW worktrees skipped the earlier probe; check before forcing.
+  if [ "$apply" = 1 ] && [ "$act" = 1 ] && [ -n "$force" ] && is_win && ! win_dir_free "$wt"; then
+    echo "           ${C_Y}Windows reports a program has it open, left in place$C_0"
+    act=0
+  fi
+
+  if [ "$apply" = 1 ] && [ "$act" = 1 ]; then
+    # shellcheck disable=SC2086  # $force is empty or one flag
+    if git -C "$repo" worktree remove $force "$wt" 2>/dev/null; then
+      if [ -n "$force" ]; then
+        echo "           ${C_G}removed$C_0 ${C_DIM}($dirty uncommitted change(s) discarded; commits kept on $branch)$C_0"
+      else
+        echo "           ${C_G}removed$C_0"
+      fi
       if [ "$del_branches" = 1 ] && [ "$branch" != "(detached)" ]; then
         git -C "$repo" branch -d "$branch" >/dev/null 2>&1 && echo "           ${C_G}deleted merged branch$C_0 $branch"
       fi
@@ -151,10 +196,12 @@ audit_repo() {
 }
 
 report STATE SIZE BRANCH PATH DETAIL
+[ "$tsv" = 1 ] && printf 'state\tkb\tbranch\tpath\tuncommitted\tlocal_commits\tdetail\n'
 while IFS= read -r repo; do
   [ -n "$repo" ] && audit_repo "$repo"
 done < <(find_repos)
 
+[ "$tsv" = 1 ] && exit 0
 echo
 echo "$count linked worktree(s). $C_B${C_G}Removable: $(human "$removable_kb").$C_0"
 [ "$apply" = 1 ] || echo "${C_DIM}Dry run. Re-run with --apply to remove REMOVABLE and prune STALE-REF.$C_0"

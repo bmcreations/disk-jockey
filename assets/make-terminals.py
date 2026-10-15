@@ -74,28 +74,28 @@ render(f"{A}/worktrees.svg", "worktrees.sh", [
 print("ok")
 
 
-def djrow(n, mark, cat, safe, reb, keep):
-    mc = {"[x]": "g", "[+]": "y", "[ ]": "d", " - ": "d"}[mark]
-    catc = "d" if mark == " - " else "t"
-    return [("t", f"  {n:>2}  "), (mc, f"{mark}  "), (catc, f"{cat:<20} "), ("g", f"{safe:<9} "), ("y", f"{reb:<9} "), ("d", keep)]
+def djrow(cur, mark, cat, safe, reb, keep):
+    mc = {"[x]": "g", "[+]": "y", "[ ]": "d"}[mark]
+    ptr = [("p", "  > ")] if cur else [("t", "    ")]
+    name = ("w", f"{cat:<21}") if cur else ("t", f"{cat:<21}")
+    return ptr + [(mc, f"{mark} "), name, ("g", f"{safe:<10}"), ("y", f"{reb:<10}"), ("d", keep)]
 
 render(f"{A}/dj.svg", "dj.sh", [
     [("p", "$ "), ("t", "scripts/dj.sh")],
     [],
-    ["P", ("p", "  (o)  "), ("w", "disk-jockey   "), ("d", "free 2.5G")],
-    [],
     ["P", ("p", "2/4  "), ("w", "Pick what to clear")],
     [],
-    [("d", f"{'':<11}"), ("d", f"{'CATEGORY':<21}"), ("d", f"{'SAFE':<10}"), ("d", f"{'REBUILD':<10}"), ("d", "KEEP")],
-    djrow(1, "[x]", "Xcode & Simulators", "41.2G", "16.0G", "51.4G"),
-    djrow(2, "[+]", "Android & JVM", "9.8G", "27.0G", "51.0G"),
-    djrow(3, "[x]", "JavaScript", "2.9G", "-", "-"),
-    djrow(4, "[ ]", "Python & ML", "1.1G", "-", "18.2G"),
-    djrow(5, "[x]", "Homebrew", "tool", "-", "-"),
-    djrow(6, " - ", "Agents", "-", "-", "15.0G"),
+    [("d", "  Report only (never deleted): Agents 15.0G")],
+    [],
+    [("d", f"{'':<8}"), ("d", f"{'CATEGORY':<21}"), ("d", f"{'SAFE':<10}"), ("d", f"{'REBUILD':<10}"), ("d", "KEEP")],
+    djrow(False, "[x]", "Xcode & Simulators", "41.2G", "16.0G", "51.4G"),
+    djrow(True, "[+]", "Android & JVM", "9.8G", "27.0G", "51.0G"),
+    djrow(False, "[x]", "JavaScript", "2.9G", "-", "-"),
+    djrow(False, "[ ]", "Python & ML", "1.1G", "-", "18.2G"),
+    djrow(False, "[x]", "Homebrew", "tool", "-", "-"),
     [],
     ["P", ("t", "  Selected: "), ("g", "80.9G")],
-    [("d", "  [x] safe caches   [+] safe + rebuild cost   KEEP is report-only and never deleted")],
-    [("d", "  Type a number to cycle it, a = all safe, r = all incl. rebuild, Enter = continue")],
-    [("t", "  > ")],
-], width=900, desc="Interactive mode: categories with safe, rebuild-cost and report-only sizes; numbers toggle what to clear.")
+    [("d", "  [x] safe caches  [+] also rebuild-cost items  [ ] skip")],
+    [("d", "  up/down move   space toggle   left/right less/more")],
+    [("d", "  a all safe   r all + rebuild   n none   enter continue   q quit")],
+], width=900, desc="Interactive mode: arrow keys move, space toggles each category between skip, safe caches, and safe plus rebuild-cost items.")

@@ -41,7 +41,7 @@ Then tell your agent *"my disk is full"*, or drive it yourself:
 ~/.claude/skills/disk-jockey/scripts/dj.sh
 ```
 
-`dj.sh` walks you through four steps: preflight fixes, pick categories, review worktrees, apply. Prefer individual commands?
+`dj.sh` walks you through four steps: preflight fixes, pick categories, pick worktrees, apply. Arrow keys move, space toggles, Enter continues. Prefer individual commands?
 
 ```bash
 cd ~/.claude/skills/disk-jockey
@@ -53,7 +53,7 @@ scripts/clean.sh              # dry run; add --apply to act
 
 ## See it work
 
-**Interactive mode.** Pick categories by number. Safe caches are preselected, rebuild-cost items are one more press, and report-only data can't be selected at all.
+**Interactive mode.** Arrow keys and space, like an installer. Safe caches are preselected, rebuild-cost items are one more press (or right arrow), and report-only data can't be selected at all. The worktree step works the same way: REMOVABLE worktrees start selected, and REVIEW ones (uncommitted or unpushed work) can be opted in after typing `yes`. Their commits stay on their branches; only uncommitted changes are discarded.
 
 <p align="center"><img src="assets/dj.svg" alt="dj.sh category picker showing safe, rebuild and keep sizes per category" width="85%"></p>
 
@@ -71,7 +71,7 @@ scripts/clean.sh              # dry run; add --apply to act
 
 | Script | What it does |
 |---|---|
-| `dj.sh` | Interactive mode for humans: one-key preflight fixes, category picker, worktree and sweep prompts, before/after summary |
+| `dj.sh` | Interactive mode for humans: one-key preflight fixes, arrow-key pickers for categories and worktrees, before/after summary |
 | `preflight.sh` | Free space, load, swap, booted simulators, emulators, idle Gradle/Kotlin daemons, active builds, agent count, APFS snapshots, uptime |
 | `scan.sh` | Sizes 60+ known targets across Xcode, simulators, Android, Gradle, Kotlin/Native, Node, Python, Go, Rust, Homebrew, Docker and Playwright |
 | `worktrees.sh` | Audits every linked worktree, nested ones included. Detects squash-merged PRs with `gh` |

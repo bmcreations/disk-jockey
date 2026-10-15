@@ -87,7 +87,7 @@ while IFS= read -r proj; do
   [ -n "$proj" ] || continue
   last=$(git -C "$proj" log -1 --format=%ct 2>/dev/null)
   [ -n "$last" ] || last=0
-  [ $(((now - last) / 86400)) -lt "$days" ] && continue
+  [ $(( (now - last) / 86400 )) -lt "$days" ] && continue
   idx=$(git -C "$proj" rev-parse --git-path index 2>/dev/null)
   case "$idx" in /*) ;; *) idx="$proj/$idx" ;; esac
   [ -n "$(find "$idx" -mtime "-$days" -print 2>/dev/null)" ] && continue

@@ -123,6 +123,19 @@ ok "apply kept dirty" '[ -f "$R/app/$W/dirty/new.txt" ]'
 ok "apply kept unpushed" '[ -f "$R/app/$W/unpushed/z" ]'
 ok "apply pruned stale ref" '! git -C "$R/app" worktree list | grep -q gone'
 
+echo "== worktrees.sh --select (REVIEW opt-in)"
+(cd "$R/app" && g worktree add $W/rev -b agent/rev && cd $W/rev && echo wip >wip.txt && echo c >c.txt && g add c.txt && g commit -m local-only)
+(cd "$R/app" && g worktree add --detach $W/det && cd $W/det && echo d >d.txt && g add d.txt && g commit -m detached-only)
+find "$R/app/$W/rev" "$R/app/$W/det" -exec touch -t "$(ago 30)" {} + 2>/dev/null
+rev_commit=$(git -C "$R/app/$W/rev" rev-parse HEAD)
+bash "$S/worktrees.sh" --apply "$R" >/dev/null 2>&1
+ok "REVIEW kept by plain --apply" '[ -d "$R/app/$W/rev" ]'
+out=$(bash "$S/worktrees.sh" --apply --select "$R/app/$W/rev" --select "$R/app/$W/det" "$R" 2>&1)
+ok "selected REVIEW removed" '[ ! -e "$R/app/$W/rev" ]' "$out"
+ok "its branch and local commit survive" '[ "$(git -C "$R/app" rev-parse agent/rev)" = "$rev_commit" ]'
+ok "detached with local commits refused even when selected" '[ -d "$R/app/$W/det" ] && echo "$out" | grep -q "on no branch"' "$out"
+ok "unselected REVIEW untouched by --select run" '[ -f "$R/app/$W/dirty/new.txt" ]'
+
 echo "== sweep.sh"
 find "$R" -exec touch -t "$(ago 30)" {} + 2>/dev/null
 bash "$S/sweep.sh" --apply "$R" >/dev/null 2>&1
@@ -191,11 +204,44 @@ blob "$HOME/.gradle/caches/modules-2"
 (cd "$R/app" && g worktree add .claude/worktrees/dj -b agent/dj)
 blob "$R/app/app/build"   # ensures the sweep prompt appears, so the scripted answers stay in order
 find "$R" -exec touch -t "$(ago 30)" {} + 2>/dev/null
+# Picker: an IDE cache in a second category gives two selectable rows (Android & JVM, IDEs).
+blob "$HOME/.cache/JetBrains/IdeaIC2023.1"; backdate 60 "$HOME/.cache/JetBrains/IdeaIC2023.1/blob" "$HOME/.cache/JetBrains/IdeaIC2023.1"
+# Last full screen of picker output, as "mark name" pairs.
+picked() { strip_ansi | tr -d '\r' | grep -E '\[[ x+]\] +(Android & JVM|IDEs)' | tail -n 2 | sed -E 's/.*(\[[ x+]\]) +(Android & JVM|IDEs).*/\1 \2/'; }
+out=$(printf '2\nq\n' | RD_ALLOW_PIPE=1 RD_MENU=numbers RD_IGNORE_CTIME=1 bash "$S/dj.sh" 2>/dev/null | picked)
+ok "numbers: typing 2 toggles the second category" '[ "$out" = "[x] Android & JVM
+[ ] IDEs" ]' "$out"
+out=$(printf '1\nq\n' | RD_ALLOW_PIPE=1 RD_MENU=numbers RD_IGNORE_CTIME=1 bash "$S/dj.sh" 2>/dev/null | picked)
+ok "numbers: typing 1 adds rebuild-cost items" 'echo "$out" | head -n 1 | grep -qF "[+] Android"' "$out"
+# Arrow keys: down, space (IDEs off), up, right (Android + rebuild), q.
+out=$(printf '\033[B \033[A\033[Cq' | RD_ALLOW_PIPE=1 RD_MENU=arrows RD_IGNORE_CTIME=1 bash "$S/dj.sh" 2>/dev/null | picked)
+ok "arrows: down + space + up + right" '[ "$out" = "[+] Android & JVM
+[ ] IDEs" ]' "$out"
+out=$(printf 'njq' | RD_ALLOW_PIPE=1 RD_MENU=arrows RD_IGNORE_CTIME=1 bash "$S/dj.sh" 2>/dev/null | picked)
+ok "arrows: n clears all, j moves" '[ "$out" = "[ ] Android & JVM
+[ ] IDEs" ]' "$out"
+ok "arrows: q leaves everything in place" '[ -d "$HOME/.cache/JetBrains/IdeaIC2023.1" ] && [ -d "$HOME/.gradle/caches/modules-2" ]'
+rm -rf "$HOME/.cache/JetBrains"
+# Worktree picker: opt into one REVIEW worktree by its row number; "no" keeps it, "yes" removes it.
+(cd "$R/app" && g worktree add $W/rev2 -b agent/rev2 && echo wip >"$W/rev2/wip.txt")
+find "$R/app/$W/rev2" -exec touch -t "$(ago 30)" {} + 2>/dev/null
+wt_row_of() { NO_COLOR=1 bash "$S/worktrees.sh" --tsv 2>/dev/null | awk -F'\t' -v p="$1" '$1=="REMOVABLE"||$1=="REVIEW"{n++} $4==p{print n; exit}'; }
+n=$(wt_row_of "$R/app/$W/rev2")
+blob "$R/app/app/build"; backdate 30 "$R/app/app/build/blob" "$R/app/app/build"   # makes the sweep prompt appear
+# Keys: n + Enter (no caches), n (no worktrees), rev2's number, Enter, confirmation, sweep n, Go? y, schedule n.
+printf 'n\n\nn\n%s\n\nno\nn\ny\nn\n' "$n" | RD_ALLOW_PIPE=1 RD_MENU=numbers bash "$S/dj.sh" >/dev/null 2>&1
+ok "picker: REVIEW selection kept when not confirmed" '[ -f "$R/app/$W/rev2/wip.txt" ]'
+n=$(wt_row_of "$R/app/$W/rev2")
+printf 'n\n\nn\n%s\n\nyes\nn\ny\nn\n' "$n" | RD_ALLOW_PIPE=1 RD_MENU=numbers bash "$S/dj.sh" >/dev/null 2>&1
+ok "picker: REVIEW selection removed after typing yes" '[ ! -e "$R/app/$W/rev2" ] && git -C "$R/app" rev-parse -q --verify agent/rev2 >/dev/null'
+ok "picker: other REVIEW worktrees untouched" '[ -f "$R/app/$W/dirty/new.txt" ]'
+ok "picker: deselected caches and worktrees untouched" '[ -d "$HOME/.gradle/caches/build-cache-1" ] && [ -d "$R/app/$W/dj" ]'
 ok "refuses to run without a terminal" '! bash "$S/dj.sh" </dev/null >/dev/null 2>&1'
 printf 'q\n' | RD_ALLOW_PIPE=1 bash "$S/dj.sh" >/dev/null 2>&1
 ok "q quits without changes" '[ -d "$HOME/.gradle/caches/build-cache-1" ] && [ -d "$R/app/.claude/worktrees/dj" ]'
-# Enter = accept preselected safe caches, y = remove worktrees, n = skip sweep, y = go, n = no schedule
-printf '\ny\nn\ny\nn\n' | RD_ALLOW_PIPE=1 bash "$S/dj.sh" >/dev/null 2>&1
+# Enter = accept preselected safe caches, Enter = accept preselected (REMOVABLE) worktrees,
+# n = skip sweep, y = go, n = no schedule
+printf '\n\nn\ny\nn\n' | RD_ALLOW_PIPE=1 bash "$S/dj.sh" >/dev/null 2>&1
 ok "preselected safe cache cleared" '[ ! -e "$HOME/.gradle/caches/build-cache-1" ]'
 ok "rebuild-cost cache kept unless chosen" '[ -d "$HOME/.gradle/caches/modules-2" ]'
 ok "confirmed worktree removed" '[ ! -e "$R/app/.claude/worktrees/dj" ]'
