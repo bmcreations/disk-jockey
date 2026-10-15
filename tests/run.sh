@@ -138,7 +138,7 @@ rev_commit=$(git -C "$R/app/$W/rev" rev-parse HEAD)
 bash "$S/worktrees.sh" --apply "$R" >/dev/null 2>&1
 ok "REVIEW kept by plain --apply" '[ -d "$R/app/$W/rev" ]'
 out=$(bash "$S/worktrees.sh" --apply --select "$R/app/$W/rev" --select "$R/app/$W/det" "$R" 2>&1)
-ok "selected REVIEW removed" '[ ! -e "$R/app/$W/rev" ]' "$out"
+ok "selected REVIEW removed" '[ ! -e "$R/app/$W/rev" ]' "select=$(bash -c ". '$S/lib.sh'; norm_path '$R/app/$W/rev'") || $out"
 ok "its branch and local commit survive" '[ "$(git -C "$R/app" rev-parse agent/rev)" = "$rev_commit" ]'
 ok "detached with local commits refused even when selected" '[ -d "$R/app/$W/det" ] && echo "$out" | grep -q "on no branch"' "$out"
 ok "unselected REVIEW untouched by --select run" '[ -f "$R/app/$W/dirty/new.txt" ]'

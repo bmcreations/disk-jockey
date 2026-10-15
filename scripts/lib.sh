@@ -14,9 +14,10 @@ is_win() { case "$RD_OS" in MINGW* | MSYS* | CYGWIN*) return 0 ;; esac; return 1
 is_linux() { ! is_mac && ! is_win; }
 
 # Windows has several spellings of one folder (C:/Users/x/AppData/Local/Temp/a, /c/Users/..., /tmp/a).
-# Round-trip through the Windows form so every path compares in one canonical POSIX form.
+# Round-trip through the Windows long form (-l expands 8.3 names like RUNNER~1) so every path compares
+# in one canonical POSIX form.
 norm_path() {
-  if is_win && have cygpath; then cygpath -u "$(cygpath -m "$1")"; else printf '%s' "$1"; fi
+  if is_win && have cygpath; then cygpath -u "$(cygpath -m -l "$1")"; else printf '%s' "$1"; fi
 }
 if is_win && have cygpath; then
   HOME=$(norm_path "$HOME")
