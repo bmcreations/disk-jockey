@@ -176,6 +176,7 @@ pick_numbers() {
           c=${shown[num - 1]}
           [ -z "${ids1[c]}${ids2[c]}" ] && continue
           step_state "$c" 1 1
+          [ -n "${RD_DEBUG_PICKER:-}" ] && log "DEBUG num=$num c=$c shown=(${shown[*]}) state=(${state[*]})"
         done
         ;;
     esac
@@ -242,7 +243,7 @@ pick_arrows() {
       j | J) [ "$cur" -lt $((${#rows[@]} - 1)) ] && cur=$((cur + 1)) ;;
       l | L) step_state "${rows[cur]}" 1 0 ;;
       h | H) step_state "${rows[cur]}" -1 0 ;;
-      ' ' | x | X) step_state "${rows[cur]}" 1 1 ;;
+      ' ' | x | X) step_state "${rows[cur]}" 1 1; [ -n "${RD_DEBUG_PICKER:-}" ] && log "DEBUG space cur=$cur rows=(${rows[*]}) state=(${state[*]})" ;;
       a | A) set_all safe ;;
       r | R) set_all rebuild ;;
       n | N) set_all none ;;
@@ -253,6 +254,7 @@ pick_arrows() {
   done
 }
 
+[ -n "${RD_DEBUG_PICKER:-}" ] && log "DEBUG built shown=(${shown[*]}) state=(${state[*]}) ids1=(${ids1[*]}) ids2=(${ids2[*]})"
 if [ "${#shown[@]}" -gt 0 ]; then
   menu="${RD_MENU:-}"
   if [ -z "$menu" ]; then
