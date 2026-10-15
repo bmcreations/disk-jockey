@@ -9,10 +9,15 @@ is_mac() { [ "$RD_OS" = "Darwin" ]; }
 is_win() { case "$RD_OS" in MINGW* | MSYS* | CYGWIN*) return 0 ;; esac; return 1; }
 is_linux() { ! is_mac && ! is_win; }
 
-# Git for Windows reports C:/Users/...; Git Bash paths are /c/Users/... Normalize before comparing.
+# Windows has several spellings of one folder (C:/Users/x/AppData/Local/Temp/a, /c/Users/..., /tmp/a).
+# Round-trip through the Windows form so every path compares in one canonical POSIX form.
 norm_path() {
-  if is_win && have cygpath; then cygpath -u "$1"; else printf '%s' "$1"; fi
+  if is_win && have cygpath; then cygpath -u "$(cygpath -m "$1")"; else printf '%s' "$1"; fi
 }
+if is_win && have cygpath; then
+  HOME=$(norm_path "$HOME")
+  export HOME
+fi
 
 # Per-run scratch dir (process lists, Windows facts). Old ones are swept on each run.
 RD_TMP="${TMPDIR:-/tmp}/disk-jockey-$(id -u 2>/dev/null || echo 0)"
@@ -326,8 +331,8 @@ process_cwds() {
   if [ -z "${RD_TEST_NO_PROC:-}" ] && [ -d /proc/self ] && [ -e /proc/self/cwd ]; then
     local d
     for d in /proc/[0-9]*/cwd; do
-      readlink "$d" 2>/dev/null
-    done | sort -u
+      if is_win; then norm_path "$(readlink "$d" 2>/dev/null)"; echo; else readlink "$d" 2>/dev/null; fi
+    done | sed '/^$/d' | sort -u
     return 0
   fi
   if [ -z "${RD_TEST_NO_LSOF:-}" ] && have lsof; then

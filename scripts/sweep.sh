@@ -51,7 +51,7 @@ find_projects() {
     find "$r" -maxdepth "$depth" \( -name node_modules -o -name build -o -name .build -o -name DerivedData -o -name Pods -o -name target \) -prune \
       -o -name .git -prune -print 2>/dev/null
   done | sed 's#/\.git$##' | sort -u | while IFS= read -r repo; do
-    printf '%s\n' "$repo"
+    norm_path "$repo"; echo
     [ -d "$repo/.git" ] && git -C "$repo" worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p' |
       while IFS= read -r w; do norm_path "$w"; echo; done
   done | sort -u

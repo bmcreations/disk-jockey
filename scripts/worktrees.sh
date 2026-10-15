@@ -62,7 +62,7 @@ find_repos() {
     [ -d "$r" ] || continue
     find "$r" -maxdepth "$depth" \( -name node_modules -o -name build -o -name .build -o -name DerivedData -o -name Pods \) -prune \
       -o -type d -name .git -prune -print 2>/dev/null
-  done | sed 's#/\.git$##' | sort -u
+  done | sed 's#/\.git$##' | while IFS= read -r r; do norm_path "$r"; echo; done | sort -u
 }
 
 recently_touched() {
