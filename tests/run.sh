@@ -7,6 +7,10 @@ T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
 # RD_NO_CMD: tool-managed targets (npm, xcrun, docker, ...) act outside $HOME, so tests never run them.
 export HOME="$T/home" RD_ROOTS="$T/home/code" RD_GH=0 RD_NO_CMD=1
+# Tests never size system folders (/Applications/Xcode*.app, simulator runtimes, /var/lib/...):
+# they're report-only, outside $HOME, and on CI Macs they hold hundreds of GB that make every scan slow.
+export RD_TARGETS="$T/targets.conf"
+awk -F'|' '/^#/ || NF!=7 || $4 !~ /(^|,)\//' "$(dirname "$0")/../targets.conf" >"$RD_TARGETS"
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 export GIT_AUTHOR_DATE=2026-01-01T10:00:00 GIT_COMMITTER_DATE=2026-01-01T10:00:00
 mkdir -p "$HOME"
