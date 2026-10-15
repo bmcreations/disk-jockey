@@ -16,13 +16,19 @@ is_linux() { ! is_mac && ! is_win; }
 # Windows has several spellings of one folder (C:/Users/x/AppData/Local/Temp/a, /c/Users/..., /tmp/a).
 # Round-trip through the Windows long form (-l expands 8.3 names like RUNNER~1) so every path compares
 # in one canonical POSIX form.
+# Elsewhere, resolve symlinks (macOS /var -> /private/var, a symlinked ~/dev) so git's physical paths match.
 norm_path() {
-  if is_win && have cygpath; then cygpath -u "$(cygpath -m -l "$1")"; else printf '%s' "$1"; fi
+  if is_win && have cygpath; then
+    cygpath -u "$(cygpath -m -l "$1")"
+  elif [ -d "$1" ]; then
+    (cd "$1" 2>/dev/null && pwd -P) || printf '%s' "$1"
+  else
+    printf '%s' "$1"
+  fi
 }
-if is_win && have cygpath; then
-  HOME=$(norm_path "$HOME")
-  export HOME
-fi
+# $HOME in the same canonical form, so "is this under home" checks agree with normalized paths.
+HOME=$(norm_path "$HOME")
+export HOME
 
 # Per-run scratch dir (process lists, Windows facts). Old ones are swept on each run.
 RD_TMP="${TMPDIR:-/tmp}/disk-jockey-$(id -u 2>/dev/null || echo 0)"

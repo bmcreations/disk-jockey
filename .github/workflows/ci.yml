@@ -32,6 +32,11 @@ jobs:
             os: ubuntu-latest
             bash: bash
             no_lsof: true
+          # Temp dir behind a symlink, like macOS (/var -> /private/var): paths must compare physically.
+          - name: ubuntu, symlinked tmp
+            os: ubuntu-latest
+            bash: bash
+            symlink_tmp: true
           # Stock macOS bash is 3.2. Run the suite with it so bash 4+ features never slip in.
           - name: macos, bash 3.2
             os: macos-latest
@@ -41,6 +46,12 @@ jobs:
       - name: hide lsof
         if: matrix.no_lsof
         run: sudo mv "$(command -v lsof)" /usr/local/lsof.hidden || true
+      - name: symlinked TMPDIR
+        if: matrix.symlink_tmp
+        run: |
+          mkdir -p "$RUNNER_TEMP/real-tmp"
+          ln -s "$RUNNER_TEMP/real-tmp" "$RUNNER_TEMP/link-tmp"
+          echo "TMPDIR=$RUNNER_TEMP/link-tmp" >>"$GITHUB_ENV"
       - name: bash version
         run: ${{ matrix.bash }} --version | head -1
       - name: tests

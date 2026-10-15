@@ -14,6 +14,7 @@ while IFS='|' read -r tier id os paths action busy note; do
   status=ok
   case "$action" in
     cmd:*)
+      [ "${RD_NO_CMD:-}" = 1 ] && continue
       c="${action#cmd:}"
       tool_ready "${c%% *}" || continue
       ;;

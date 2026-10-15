@@ -215,11 +215,15 @@ find "$R" -exec touch -t "$(ago 30)" {} + 2>/dev/null
 blob "$HOME/.cache/JetBrains/IdeaIC2023.1"; backdate 60 "$HOME/.cache/JetBrains/IdeaIC2023.1/blob" "$HOME/.cache/JetBrains/IdeaIC2023.1"
 # Last full screen of picker output, as "mark name" pairs.
 picked() { strip_ansi | tr -d '\r' | grep -E '\[[ x+]\] +(Android & JVM|IDEs)' | tail -n 2 | sed -E 's/.*(\[[ x+]\]) +(Android & JVM|IDEs).*/\1 \2/'; }
-out=$(printf '2\nq\n' | RD_ALLOW_PIPE=1 RD_MENU=numbers RD_IGNORE_CTIME=1 bash "$S/dj.sh" 2>/dev/null | picked)
-ok "numbers: typing 2 toggles the second category" '[ "$out" = "[x] Android & JVM
-[ ] IDEs" ]' "$out"
-out=$(printf '1\nq\n' | RD_ALLOW_PIPE=1 RD_MENU=numbers RD_IGNORE_CTIME=1 bash "$S/dj.sh" 2>/dev/null | picked)
-ok "numbers: typing 1 adds rebuild-cost items" 'echo "$out" | head -n 1 | grep -qF "[+] Android"' "$out"
+# Row numbers depend on what else the machine has (macOS lists Xcode report-only data): read them from the table.
+table=$(printf 'q\n' | RD_ALLOW_PIPE=1 RD_MENU=numbers RD_IGNORE_CTIME=1 bash "$S/dj.sh" 2>/dev/null | strip_ansi)
+row_ides=$(printf '%s\n' "$table" | sed -n 's/^ *\([0-9][0-9]*\) .*IDEs .*/\1/p' | head -n 1)
+row_android=$(printf '%s\n' "$table" | sed -n 's/^ *\([0-9][0-9]*\) .*Android & JVM .*/\1/p' | head -n 1)
+out=$(printf '%s\nq\n' "$row_ides" | RD_ALLOW_PIPE=1 RD_MENU=numbers RD_IGNORE_CTIME=1 bash "$S/dj.sh" 2>/dev/null | picked)
+ok "numbers: typing the IDEs row toggles only IDEs" '[ "$out" = "[x] Android & JVM
+[ ] IDEs" ]' "rows: android=$row_android ides=$row_ides || $out"
+out=$(printf '%s\nq\n' "$row_android" | RD_ALLOW_PIPE=1 RD_MENU=numbers RD_IGNORE_CTIME=1 bash "$S/dj.sh" 2>/dev/null | picked)
+ok "numbers: typing the Android row adds rebuild-cost items" 'echo "$out" | head -n 1 | grep -qF "[+] Android"' "$out"
 # Arrow keys: down, space (IDEs off), up, right (Android + rebuild), q.
 out=$(printf '\033[B \033[A\033[Cq' | RD_ALLOW_PIPE=1 RD_MENU=arrows RD_IGNORE_CTIME=1 bash "$S/dj.sh" 2>/dev/null | picked)
 ok "arrows: down + space + up + right" '[ "$out" = "[+] Android & JVM
