@@ -3,6 +3,7 @@
 # Meant for agent SessionStart hooks and shell prompts. Usage: disk-guard.sh [SIZE]  (default 20G or $RD_MIN_FREE)
 . "$(dirname "$0")/lib.sh"
 
+case "${1:-}" in -h | --help) echo "Usage: disk-guard.sh [SIZE]   prints a warning when free space is below SIZE (default 20G or \$RD_MIN_FREE)"; exit 0 ;; esac
 min="${1:-${RD_MIN_FREE:-20G}}"
 f=$(free_kb)
 if [ -n "$f" ] && [ "$f" -lt "$(to_kb "$min")" ]; then

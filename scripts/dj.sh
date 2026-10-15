@@ -2,6 +2,12 @@
 # Interactive mode for humans: preflight fixes, pick categories, review worktrees, apply.
 # Agents and automation should call scan.sh / clean.sh / worktrees.sh / sweep.sh directly.
 . "$(dirname "$0")/lib.sh"
+case "${1:-}" in
+  -h | --help)
+    echo "Usage: dj.sh   interactive: preflight fixes, pick categories and worktrees, apply. Needs a terminal."
+    echo "Keys: up/down or j/k move, space toggles, left/right less/more, a/r/n bulk, enter continue, q quit."
+    exit 0 ;;
+esac
 D="$RD_DIR"
 
 if [ ! -t 1 ] && [ -z "${RD_ALLOW_PIPE:-}" ]; then
@@ -24,7 +30,7 @@ step() { printf '\n%s%s%s  %s%s%s\n\n' "$C_B$C_P" "$1" "$C_0" "$C_B" "$2" "$C_0"
 note() { printf '%s%s%s\n' "$C_DIM" "$*" "$C_0"; }
 
 before=$(free_kb)
-printf '\n  %s(%s)%s  %sdisk-jockey%s   %sfree %s%s\n' "$C_P" "o" "$C_0" "$C_B" "$C_0" "$C_DIM" "$(human "$before")" "$C_0"
+printf '\n  %s(%s)%s  %sdisk-jockey%s %s%s   free %s%s\n' "$C_P" "o" "$C_0" "$C_B" "$C_0" "$C_DIM" "$RD_VERSION" "$(human "$before")" "$C_0"
 
 # ---------------------------------------------------------------- 1. preflight
 step "1/4" "Preflight: is it really files?"

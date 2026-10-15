@@ -200,6 +200,48 @@ if is_windows_host; then
   taskkill //F //IM ping.exe >/dev/null 2>&1; wait 2>/dev/null
 fi
 
+echo "== disk-jockey command and install.sh"
+REPO_ROOT="$(dirname "$S")"
+DJ="$REPO_ROOT/bin/disk-jockey"
+ok "command: version matches VERSION" '[ "$(bash "$DJ" --version)" = "disk-jockey $(cat "$REPO_ROOT/VERSION")" ]'
+ok "command: unknown subcommand exits 2" 'bash "$DJ" nope >/dev/null 2>&1; [ $? = 2 ]'
+ok "command: subcommands reach their script" 'bash "$DJ" clean --help | grep -q "Usage: clean.sh"'
+ok "command: every subcommand has --help" 'for c in preflight scan clean worktrees sweep schedule guard dj; do bash "$DJ" $c --help 2>/dev/null | grep -q "Usage" || exit 1; done'
+if command -v git >/dev/null 2>&1 && command -v tar >/dev/null 2>&1; then
+  # Install from a snapshot of the working tree (committed or not) into a throwaway home.
+  SRC="$T/src"; mkdir -p "$SRC"
+  (cd "$REPO_ROOT" && git ls-files -co --exclude-standard 2>/dev/null | grep -v '^assets/' | tar -cf - -T -) | (cd "$SRC" && tar -xf -)
+  (cd "$SRC" && g init && g add -A && g commit -m snapshot)
+  IH="$T/ihome"; mkdir -p "$IH"
+  inst() { HOME="$IH" DJ_REPO="$SRC" DJ_BIN="$IH/.local/bin" PATH="$PATH" bash "$SRC/install.sh" "$@" 2>&1; }
+  out=$(inst)
+  ok "install: clone in ~/.agents/skills" '[ -d "$IH/.agents/skills/disk-jockey/.git" ]' "$out"
+  ok "install: Claude Code sees the skill" '[ -f "$IH/.claude/skills/disk-jockey/SKILL.md" ]' "$out"
+  ok "install: wrapper runs the command" '[ "$(HOME="$IH" bash "$IH/.local/bin/disk-jockey" version)" = "disk-jockey $(cat "$SRC/VERSION")" ]'
+  ok "install: PATH hint when bin dir isn't on PATH" 'echo "$out" | grep -q "isn.t on your PATH"'
+  out=$(inst)
+  ok "install: re-run is idempotent" '[ -d "$IH/.agents/skills/disk-jockey/.git" ] && [ -f "$IH/.claude/skills/disk-jockey/SKILL.md" ]' "$out"
+  printf '#!/bin/sh\necho mine\n' >"$IH/.local/bin/disk-jockey"
+  ok "install: won't overwrite someone else's disk-jockey" '! inst >/dev/null 2>&1 && grep -q mine "$IH/.local/bin/disk-jockey"'
+  rm -f "$IH/.local/bin/disk-jockey"; inst >/dev/null
+  # update: on a branch it pulls; pinned to a tag it moves to the newest tag.
+  (cd "$SRC" && g tag v0.0.1)
+  inst --ref v0.0.1 >/dev/null
+  (cd "$SRC" && echo 9.9.9 >VERSION && g commit -am bump && g tag v9.9.9)
+  out=$(HOME="$IH" bash "$IH/.local/bin/disk-jockey" update 2>&1)
+  ok "update: pinned install moves to the newest release tag" '[ "$(cat "$IH/.agents/skills/disk-jockey/VERSION")" = 9.9.9 ]' "$out"
+  out=$(inst --uninstall)
+  ok "uninstall: wrapper and link removed, clone kept" '[ ! -e "$IH/.local/bin/disk-jockey" ] && [ ! -e "$IH/.claude/skills/disk-jockey" ] && [ -d "$IH/.agents/skills/disk-jockey" ]' "$out"
+  # Legacy layout: a clean clone directly in ~/.claude/skills is moved, not duplicated.
+  IH="$T/ihome2"; mkdir -p "$IH/.claude/skills"; git clone -q "$SRC" "$IH/.claude/skills/disk-jockey"
+  out=$(inst)
+  ok "install: moves an old ~/.claude/skills clone to ~/.agents/skills" '[ -d "$IH/.agents/skills/disk-jockey/.git" ] && [ "$(cd -P "$IH/.claude/skills/disk-jockey" && pwd)" = "$(cd -P "$IH/.agents/skills/disk-jockey" && pwd)" ]' "$out"
+  # ...but never moves one with local changes.
+  IH="$T/ihome3"; mkdir -p "$IH/.claude/skills"; git clone -q "$SRC" "$IH/.claude/skills/disk-jockey"; echo edit >>"$IH/.claude/skills/disk-jockey/targets.conf"
+  out=$(inst)
+  ok "install: leaves a modified old clone in place" 'grep -q edit "$IH/.claude/skills/disk-jockey/targets.conf" && [ -d "$IH/.agents/skills/disk-jockey/.git" ]' "$out"
+fi
+
 echo "== colors"
 esc=$(printf '\033[')
 ok "plain text when piped" '! bash "$S/preflight.sh" | grep -qF "$esc"'

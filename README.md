@@ -7,6 +7,7 @@
   <img src="https://img.shields.io/badge/bash-3.2%2B-4EAA25?style=flat-square&logo=gnubash&logoColor=white" alt="bash 3.2+">
   <img src="https://img.shields.io/badge/skill-Claude%20Code%20%7C%20Codex%20%7C%20Cursor-D97757?style=flat-square" alt="Agent skill for Claude Code, Codex and Cursor">
   <a href="https://github.com/bmcreations/disk-jockey/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/bmcreations/disk-jockey/ci.yml?branch=main&style=flat-square&label=tests" alt="CI status"></a>
+  <a href="https://github.com/bmcreations/disk-jockey/releases/latest"><img src="https://img.shields.io/github/v/release/bmcreations/disk-jockey?style=flat-square&label=release" alt="Latest release"></a>
   <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="MIT license">
 </p>
 
@@ -32,27 +33,49 @@ A generic "clear your caches" script finds none of that. disk-jockey checks for 
 ## Quick start
 
 ```bash
-git clone https://github.com/bmcreations/disk-jockey ~/.agents/skills/disk-jockey
-mkdir -p ~/.claude/skills && ln -s ~/.agents/skills/disk-jockey ~/.claude/skills/disk-jockey
+curl -fsSL https://github.com/bmcreations/disk-jockey/releases/latest/download/install.sh | bash
 ```
 
-One copy, every agent: Codex and Cursor read `~/.agents/skills`, Claude Code reads `~/.claude/skills` through the symlink. Using only Codex or Cursor? Skip the second line. Update with `git -C ~/.agents/skills/disk-jockey pull`. On Windows, Git Bash's `ln -s` copies the folder unless Developer Mode is on and `MSYS=winsymlinks:nativestrict` is set. A copy works but needs its own `git pull`.
+That installs the latest release once for every agent and adds a `disk-jockey` command:
+
+- `~/.agents/skills/disk-jockey` is the copy Codex and Cursor read.
+- `~/.claude/skills/disk-jockey` links to it for Claude Code (a junction on Windows, so no Developer Mode needed).
+- `~/.local/bin/disk-jockey` is the command (`~/bin` in Git Bash). If that folder isn't on your PATH, the installer prints the line to add.
+
+An existing clone in `~/.claude/skills` is moved to the shared location rather than duplicated. Update with `disk-jockey update`; remove with `bash ~/.agents/skills/disk-jockey/install.sh --uninstall`.
 
 Then tell your agent *"my disk is full"*, or drive it yourself:
 
 ```bash
-~/.agents/skills/disk-jockey/scripts/dj.sh
+disk-jockey                 # interactive: preflight fixes, pick categories, pick worktrees, apply
+disk-jockey preflight       # memory, swap and snapshots, before touching files
+disk-jockey scan            # where the space is, by tier
+disk-jockey worktrees ~/dev # stale agent worktrees
+disk-jockey clean           # dry run; add --apply to act
 ```
 
-`dj.sh` walks you through four steps: preflight fixes, pick categories, pick worktrees, apply. Arrow keys move, space toggles, Enter continues. Prefer individual commands?
+Arrow keys move, space toggles, Enter continues. Every command takes `--help`.
 
+<details>
+<summary><b>Other ways to install</b></summary>
+
+**Follow `main` instead of releases:**
 ```bash
-cd ~/.agents/skills/disk-jockey
-scripts/preflight.sh          # memory, swap and snapshots, before touching files
-scripts/scan.sh               # where the space is, by tier
-scripts/worktrees.sh ~/dev    # stale agent worktrees
-scripts/clean.sh              # dry run; add --apply to act
+curl -fsSL https://raw.githubusercontent.com/bmcreations/disk-jockey/main/install.sh | bash
 ```
+
+**Manually, without the installer:**
+```bash
+git clone https://github.com/bmcreations/disk-jockey ~/.agents/skills/disk-jockey
+mkdir -p ~/.claude/skills && ln -s ~/.agents/skills/disk-jockey ~/.claude/skills/disk-jockey
+```
+Then run `~/.agents/skills/disk-jockey/bin/disk-jockey`, or the scripts in `scripts/` directly.
+
+**claude.ai:** download `disk-jockey-vX.Y.Z.zip` from [Releases](https://github.com/bmcreations/disk-jockey/releases/latest) and upload it as a custom skill.
+
+**Pin a version:** `bash install.sh --ref v0.1.0`
+
+</details>
 
 ## See it work
 
@@ -83,6 +106,8 @@ scripts/clean.sh              # dry run; add --apply to act
 | `schedule.sh` | Daily tier-1 cleanup, only when free space drops below a threshold (launchd or systemd) |
 | `disk-guard.sh` | One-line low-disk warning for agent SessionStart hooks |
 
+Each script is also a `disk-jockey` subcommand: `disk-jockey scan`, `disk-jockey worktrees`, and so on (`dj.sh` is plain `disk-jockey`).
+
 ## Safe by default
 
 | Tier | What | Behavior |
@@ -97,13 +122,13 @@ scripts/clean.sh              # dry run; add --apply to act
 - **In-use checks fail safe.** Worktrees and projects with a process inside are skipped (read from `/proc` on Linux and Git Bash, `lsof` on macOS). On Windows, each folder is also test-renamed right before deletion: Windows refuses that while any program has the folder open. If processes can't be inspected at all, `--apply` refuses to run rather than assuming nothing is in use.
 - **Symlinks** are never followed or deleted.
 - **Color** only on an interactive terminal. Agents reading through a pipe get plain text. `NO_COLOR=1` turns it off, `FORCE_COLOR=1` forces it.
-- **Worktrees** are removed only via `git worktree remove`, which itself refuses dirty trees. Branches are kept.
+- **Worktrees** are removed only via `git worktree remove`, which refuses dirty trees. The one exception is a REVIEW worktree you select yourself and confirm by typing `yes`: its uncommitted changes are discarded, its commits stay on its branch. Branches are never deleted.
 - **Sweep** deletes a build folder only next to its build file, and never anything git tracks.
 
 ## Keep the floor clear
 
 ```bash
-scripts/schedule.sh install --threshold 50G
+disk-jockey schedule install --threshold 50G
 ```
 
 Warn agents before heavy work. In `~/.claude/settings.json`:

@@ -4,6 +4,7 @@
 RD_OS="${RD_FORCE_OS:-$(uname -s)}"
 RD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RD_TARGETS="${RD_TARGETS:-$RD_DIR/../targets.conf}"
+RD_VERSION="$(cat "$RD_DIR/../VERSION" 2>/dev/null || echo dev)"
 
 # Defined first: everything below may run at load time.
 have() { command -v "$1" >/dev/null 2>&1; }

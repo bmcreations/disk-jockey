@@ -5,6 +5,12 @@
 . "$(dirname "$0")/lib.sh"
 
 cmd="${1:-status}"
+case "$cmd" in
+  -h | --help)
+    echo "Usage: schedule.sh install [--threshold 50G] [--tier 1] [--hour 12] | uninstall | status"
+    echo "Daily cleanup of tier <= N, only when free space is below the threshold (launchd, systemd or Task Scheduler)."
+    exit 0 ;;
+esac
 shift || true
 threshold=50G tier=1 hour=12
 while [ $# -gt 0 ]; do

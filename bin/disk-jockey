@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# disk-jockey: one command for the scripts in this skill.
+set -u
+
+# Find the install even when this file is reached through a symlink (Homebrew, manual links).
+src="${BASH_SOURCE[0]}"
+while [ -L "$src" ]; do
+  dir=$(cd -P "$(dirname "$src")" && pwd)
+  src=$(readlink "$src")
+  case "$src" in /*) ;; *) src="$dir/$src" ;; esac
+done
+ROOT=$(cd -P "$(dirname "$src")/.." && pwd)
+S="$ROOT/scripts"
+VERSION=$(cat "$ROOT/VERSION" 2>/dev/null || echo dev)
+
+usage() {
+  cat <<USAGE
+disk-jockey $VERSION: disk hygiene for the agentic era
+
+Usage: disk-jockey [command] [options]
+
+  (no command)   interactive: preflight fixes, pick categories and worktrees, apply
+  preflight      is it really files? swap, simulators, daemons, snapshots
+  scan           where the space is, by tier
+  clean          tiered cache cleanup (dry run unless --apply)
+  worktrees      audit agent worktrees (dry run unless --apply)
+  sweep          build outputs in idle projects (dry run unless --apply)
+  schedule       install|uninstall|status a daily cleanup
+  guard [SIZE]   one-line low-disk warning (for agent hooks)
+  update         update this install (git pull)
+  version        print the version
+
+Every command takes --help. Installed at: $ROOT
+USAGE
+}
+
+cmd="${1:-}"
+[ $# -gt 0 ] && shift
+case "$cmd" in
+  "" | dj | interactive) exec bash "$S/dj.sh" "$@" ;;
+  preflight | scan | clean | worktrees | sweep | schedule) exec bash "$S/$cmd.sh" "$@" ;;
+  guard) exec bash "$S/disk-guard.sh" "$@" ;;
+  version | --version | -v) echo "disk-jockey $VERSION" ;;
+  help | --help | -h) usage ;;
+  update)
+    if [ ! -d "$ROOT/.git" ]; then
+      echo "This copy wasn't installed with git ($ROOT). Update it the way you installed it (e.g. brew upgrade)." >&2
+      exit 1
+    fi
+    if [ -n "$(git -C "$ROOT" status --porcelain 2>/dev/null)" ]; then
+      echo "Local changes in $ROOT; not updating. Commit or stash them first." >&2
+      exit 1
+    fi
+    before="$VERSION"
+    if git -C "$ROOT" symbolic-ref -q HEAD >/dev/null; then
+      # Following a branch (main): fast-forward it.
+      git -C "$ROOT" pull -q --ff-only || { echo "Update failed (see git output above)." >&2; exit 1; }
+    else
+      # Pinned to a release tag (the release installer does this): move to the newest release.
+      git -C "$ROOT" fetch -q --tags origin || { echo "Update failed: couldn't reach origin." >&2; exit 1; }
+      latest=$(git -C "$ROOT" tag -l 'v*' --sort=-v:refname | head -n 1)
+      [ -n "$latest" ] || { echo "No release tags found." >&2; exit 1; }
+      git -C "$ROOT" -c advice.detachedHead=false checkout -q "$latest" || { echo "Update failed." >&2; exit 1; }
+    fi
+    after=$(cat "$ROOT/VERSION" 2>/dev/null || echo dev)
+    if [ "$before" = "$after" ]; then echo "disk-jockey $after (already up to date, or updated in place)"; else echo "disk-jockey $before -> $after"; fi
+    ;;
+  *)
+    echo "disk-jockey: unknown command '$cmd'" >&2
+    usage >&2
+    exit 2
+    ;;
+esac

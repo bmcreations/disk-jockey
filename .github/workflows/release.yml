@@ -1,0 +1,61 @@
+name: release
+
+# Push a tag like v0.1.0 (matching the VERSION file) to publish a release.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  # The full CI matrix (lint, Ubuntu, macOS bash 3.2, Windows) must pass first.
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    needs: ci
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: tag matches VERSION
+        run: |
+          v="$(cat VERSION)"
+          if [ "$GITHUB_REF_NAME" != "v$v" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME doesn't match VERSION ($v). Bump VERSION or retag."
+            exit 1
+          fi
+
+      - name: build skill zip (claude.ai upload) and pinned installer
+        run: |
+          mkdir -p dist/disk-jockey
+          cp -R SKILL.md VERSION LICENSE targets.conf scripts bin dist/disk-jockey/
+          (cd dist && zip -qr "disk-jockey-$GITHUB_REF_NAME.zip" disk-jockey)
+          # The release's install.sh installs this exact tag; main's install.sh follows main.
+          sed "s/^REF=\"\"$/REF=\"$GITHUB_REF_NAME\"/" install.sh >dist/install.sh
+          grep -qx "REF=\"$GITHUB_REF_NAME\"" dist/install.sh
+
+      - name: verify zip
+        run: |
+          z="dist/disk-jockey-$GITHUB_REF_NAME.zip"
+          unzip -l "$z"
+          # claude.ai expects one top-level folder with SKILL.md in it.
+          [ "$(unzip -Z1 "$z" | cut -d/ -f1 | sort -u)" = disk-jockey ]
+          unzip -Z1 "$z" | grep -qx 'disk-jockey/SKILL.md'
+          sed -n '2,3p' SKILL.md | grep -q '^name: disk-jockey$'
+          sed -n '2,4p' SKILL.md | grep -q '^description: .'
+          # Scripts keep their executable bit and run from the unpacked zip.
+          t=$(mktemp -d); unzip -q "$z" -d "$t"
+          [ -x "$t/disk-jockey/scripts/scan.sh" ] && [ -x "$t/disk-jockey/bin/disk-jockey" ]
+          [ "$(bash "$t/disk-jockey/bin/disk-jockey" version)" = "disk-jockey $(cat VERSION)" ]
+
+      - name: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "dist/disk-jockey-$GITHUB_REF_NAME.zip" dist/install.sh \
+            --title "disk-jockey $GITHUB_REF_NAME" --generate-notes --verify-tag

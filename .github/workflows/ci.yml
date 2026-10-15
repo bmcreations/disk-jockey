@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Release runs the same checks before publishing.
+  workflow_call:
 
 permissions:
   contents: read
@@ -14,7 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: shellcheck
-        run: shellcheck -S warning -e SC1091,SC2034,SC2016 scripts/*.sh tests/run.sh
+        run: shellcheck -S warning -e SC1091,SC2034,SC2016 scripts/*.sh tests/run.sh bin/disk-jockey install.sh
       - name: no em dashes in docs
         run: "! grep -rn $'—' README.md SKILL.md"
 

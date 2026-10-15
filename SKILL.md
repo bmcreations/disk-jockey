@@ -22,7 +22,7 @@ All scripts are in `scripts/`, read-only by default, and need only bash 3.2+ (st
 
 ## Interactive mode is for humans
 
-`scripts/dj.sh` is a guided, colorful version of this whole workflow for a person at a terminal. It refuses to run without one. When the user wants to drive cleanup themselves, tell them to run `scripts/dj.sh` from this skill's folder (usually `~/.agents/skills/disk-jockey`) in their own terminal. As an agent, use the individual scripts below; their output is plain text when piped.
+`scripts/dj.sh` is a guided, colorful version of this whole workflow for a person at a terminal. It refuses to run without one. When the user wants to drive cleanup themselves, tell them to run `disk-jockey` in their own terminal (installed by `install.sh`), or `scripts/dj.sh` from this skill's folder (usually `~/.agents/skills/disk-jockey`). As an agent, use the individual scripts below; their output is plain text when piped.
 
 If the user wants specific REVIEW worktrees removed, show the uncommitted and local-commit counts from `worktrees.sh`, get explicit confirmation for each, then run `worktrees.sh --apply --select PATH [--select PATH ...]`. That discards their uncommitted changes and keeps their commits on their branches. A detached worktree with local commits is always refused, since no branch would keep those commits.
 

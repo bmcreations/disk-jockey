@@ -5,7 +5,10 @@
 . "$(dirname "$0")/lib.sh"
 
 tsv=0
-[ "${1:-}" = "--tsv" ] && tsv=1
+case "${1:-}" in
+  --tsv) tsv=1 ;;
+  -h | --help) echo "Usage: preflight.sh [--tsv]   read-only: free space, load, swap, simulators, emulators, daemons, snapshots, uptime"; exit 0 ;;
+esac
 warns=0
 
 row() { # level item value advice

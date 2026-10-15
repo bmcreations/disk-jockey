@@ -4,7 +4,10 @@
 . "$(dirname "$0")/lib.sh"
 
 fmt=table
-[ "${1:-}" = "--tsv" ] && fmt=tsv
+case "${1:-}" in
+  --tsv) fmt=tsv ;;
+  -h | --help) echo "Usage: scan.sh [--tsv]   read-only: sizes every known target, grouped by tier"; exit 0 ;;
+esac
 
 tmp=$(mktemp)
 trap 'rm -f "$tmp"' EXIT
