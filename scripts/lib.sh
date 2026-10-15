@@ -5,6 +5,10 @@ RD_OS="${RD_FORCE_OS:-$(uname -s)}"
 RD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RD_TARGETS="${RD_TARGETS:-$RD_DIR/../targets.conf}"
 
+# Defined first: everything below may run at load time.
+have() { command -v "$1" >/dev/null 2>&1; }
+log() { printf '%s\n' "$*" >&2; }
+
 is_mac() { [ "$RD_OS" = "Darwin" ]; }
 is_win() { case "$RD_OS" in MINGW* | MSYS* | CYGWIN*) return 0 ;; esac; return 1; }
 is_linux() { ! is_mac && ! is_win; }
@@ -52,8 +56,6 @@ tilde() { case "$1" in "$HOME"/*) printf '~/%s' "${1#"$HOME"/}" ;; *) printf '%s
 paint() {
   if [ -n "$1" ]; then printf '%s%-*s%s' "$1" "$2" "$3" "$C_0"; else printf '%-*s' "$2" "$3"; fi
 }
-have() { command -v "$1" >/dev/null 2>&1; }
-log() { printf '%s\n' "$*" >&2; }
 
 # KB -> "1.2G"
 human() {

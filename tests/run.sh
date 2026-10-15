@@ -78,6 +78,13 @@ undefined=$(cd "$S" && for f in *.sh; do
       printf '%s\n' "$defined" | grep -qx "$fn" || command -v "$fn" >/dev/null 2>&1 || echo "$f:$fn"
     done
 done)
+# lib.sh runs code at load time; load it as every platform and require silence (catches use-before-define).
+FC="$T/fakecygpath"; mkdir -p "$FC"
+printf '#!/bin/sh\ncase "$1" in -m) echo "C:/x$2";; -u) echo "/c${2#C:}";; esac\n' >"$FC/cygpath"; chmod +x "$FC/cygpath"
+for os in Linux Darwin MINGW64_NT-10.0; do
+  load_err=$(PATH="$FC:$PATH" RD_FORCE_OS="$os" bash -c ". '$S/lib.sh'" 2>&1)
+  ok "lib.sh loads cleanly as $os" '[ -z "$load_err" ]' "$load_err"
+done
 ok "no undefined helper functions" '[ -z "$undefined" ]' "$undefined"
 
 echo "== clean.sh"
