@@ -56,6 +56,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            "dist/disk-jockey-$GITHUB_REF_NAME.zip" dist/install.sh \
-            --title "disk-jockey $GITHUB_REF_NAME" --generate-notes --verify-tag
+          assets=("dist/disk-jockey-$GITHUB_REF_NAME.zip" dist/install.sh)
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            # Release drafted in the GitHub UI (which also created the tag): attach the assets.
+            gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
+              --title "disk-jockey $GITHUB_REF_NAME" --generate-notes --verify-tag
+          fi
