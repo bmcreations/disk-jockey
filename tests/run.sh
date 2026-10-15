@@ -232,11 +232,15 @@ rm -rf "$HOME/.cache/JetBrains"
 # Worktree picker: opt into one REVIEW worktree by its row number; "no" keeps it, "yes" removes it.
 (cd "$R/app" && g worktree add $W/rev2 -b agent/rev2 && echo wip >"$W/rev2/wip.txt")
 find "$R/app/$W/rev2" -exec touch -t "$(ago 30)" {} + 2>/dev/null
-wt_row_of() { NO_COLOR=1 bash "$S/worktrees.sh" --tsv 2>/dev/null | awk -F'\t' -v p="$1" '$1=="REMOVABLE"||$1=="REVIEW"{n++} $4==p{print n; exit}'; }
+wt_row_of() {
+  local p; p=$(bash -c ". '$S/lib.sh'; norm_path '$1'")   # same spelling worktrees.sh prints (matters on Windows)
+  NO_COLOR=1 bash "$S/worktrees.sh" --tsv 2>/dev/null | awk -F'\t' -v p="$p" '$1=="REMOVABLE"||$1=="REVIEW"{n++} $4==p{print n; exit}'
+}
 n=$(wt_row_of "$R/app/$W/rev2")
 blob "$R/app/app/build"; backdate 30 "$R/app/app/build/blob" "$R/app/app/build"   # makes the sweep prompt appear
 # Keys: n + Enter (no caches), n (no worktrees), rev2's number, Enter, confirmation, sweep n, Go? y, schedule n.
 printf 'n\n\nn\n%s\n\nno\nn\ny\nn\n' "$n" | RD_ALLOW_PIPE=1 RD_MENU=numbers bash "$S/dj.sh" >/dev/null 2>&1
+ok "picker: found the worktree's row" '[ -n "$n" ]'
 ok "picker: REVIEW selection kept when not confirmed" '[ -f "$R/app/$W/rev2/wip.txt" ]'
 n=$(wt_row_of "$R/app/$W/rev2")
 printf 'n\n\nn\n%s\n\nyes\nn\ny\nn\n' "$n" | RD_ALLOW_PIPE=1 RD_MENU=numbers bash "$S/dj.sh" >/dev/null 2>&1
