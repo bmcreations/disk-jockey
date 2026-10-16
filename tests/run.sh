@@ -157,6 +157,115 @@ ok "committed Pods in main repo kept" '[ -f "$R/app/Pods/Lib/f" ]'
 ok "committed Pods in nested worktree kept" '[ -f "$R/app/$W/dirty/Pods/Lib/f" ]'
 ok "uncommitted work in worktree kept" '[ -f "$R/app/$W/dirty/new.txt" ]'
 
+echo "== quarantine (opt-in undo)"
+QD="$HOME/.disk-jockey/quarantine"
+qn() { find "$QD" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' '; }
+ok "off by default" 'bash "$S/quarantine.sh" status | grep -q "Quarantine: off"'
+blob "$HOME/.gradle/caches/build-cache-1"
+out=$(bash "$S/clean.sh" --apply --quarantine --only gradle-build-cache 2>&1)
+ok "--quarantine moves instead of deleting" '[ ! -e "$HOME/.gradle/caches/build-cache-1" ] && [ "$(qn)" = 1 ]' "$out"
+ok "summary says space isn't freed yet" 'echo "$out" | grep -q "Moved .* to quarantine"'
+ok "list shows the item and its source" 'bash "$S/quarantine.sh" list | grep -q "clean:gradle-build-cache"'
+out=$(bash "$S/quarantine.sh" restore --last 2>&1)
+ok "restore --last puts it back" '[ -f "$HOME/.gradle/caches/build-cache-1/blob" ] && [ "$(qn)" = 0 ]' "$out"
+bash "$S/quarantine.sh" on --days 3 >/dev/null
+ok "quarantine on persists" 'bash "$S/quarantine.sh" status | grep -q "on.* (kept 3 days"'
+bash "$S/clean.sh" --apply --only gradle-build-cache >/dev/null 2>&1
+ok "clean honors the setting" '[ ! -e "$HOME/.gradle/caches/build-cache-1" ] && [ "$(qn)" = 1 ]'
+ok "--no-quarantine overrides it" 'blob "$HOME/.gradle/caches/build-cache-1"; bash "$S/clean.sh" --apply --no-quarantine --only gradle-build-cache >/dev/null 2>&1; [ ! -e "$HOME/.gradle/caches/build-cache-1" ] && [ "$(qn)" = 1 ]'
+blob "$HOME/.gradle/caches/build-cache-1" 1000
+ok "restore won't overwrite a path that exists again" '! bash "$S/quarantine.sh" restore --last >/dev/null 2>&1 && [ "$(qn)" = 1 ]'
+rm -rf "$HOME/.gradle/caches/build-cache-1"
+item=$(find "$QD" -mindepth 1 -maxdepth 1 -type d | head -n 1)
+sed 's/^time=.*/time=1000/' "$item/meta" >"$item/meta.new" && mv "$item/meta.new" "$item/meta"
+bash "$S/clean.sh" --apply --only no-such-target >/dev/null 2>&1
+ok "expired items purged on the next --apply" '[ ! -e "$item" ]'
+ok "the quarantine folder itself is protected" 'bash -c ". \"$S/lib.sh\"; ! safe_to_delete \"$HOME/.disk-jockey\""'
+# Worktrees are moved with git, so uncommitted work survives and restore re-registers them.
+(cd "$R/app" && g worktree add $W/qrev -b agent/qrev && echo wip >"$W/qrev/wip.txt")
+find "$R/app/$W/qrev" -exec touch -t "$(ago 30)" {} + 2>/dev/null
+out=$(bash "$S/worktrees.sh" --apply --select "$R/app/$W/qrev" "$R" 2>&1)
+ok "selected REVIEW worktree quarantined with its changes" '[ ! -e "$R/app/$W/qrev" ] && [ -n "$(find "$QD" -name wip.txt)" ]' "$out"
+ok "quarantined worktree hidden from the audit" '! bash "$S/worktrees.sh" "$R" 2>&1 | grep -q "disk-jockey/quarantine"'
+out=$(bash "$S/quarantine.sh" restore "$R/app/$W/qrev" 2>&1)
+ok "restore by path brings back the worktree and its changes" '[ -f "$R/app/$W/qrev/wip.txt" ] && git -C "$R/app/$W/qrev" status --porcelain | grep -q wip.txt' "$out"
+ok "restored worktree is registered with git again" 'git -C "$R/app" worktree list | grep -q "worktrees/qrev"'
+bash "$S/worktrees.sh" --apply --select "$R/app/$W/qrev" "$R" >/dev/null 2>&1
+bash "$S/quarantine.sh" purge --all >/dev/null 2>&1
+ok "purge --all deletes and unregisters" '[ "$(qn)" = 0 ] && ! git -C "$R/app" worktree list | grep -q qrev'
+ok "its branch survives the purge" 'git -C "$R/app" rev-parse -q --verify agent/qrev >/dev/null'
+bash "$S/quarantine.sh" off >/dev/null
+ok "quarantine off" 'bash "$S/quarantine.sh" status | grep -q "Quarantine: off"'
+
+echo "== worktrees.sh --merged (agent-triggered)"
+(cd "$R/app" && g worktree add $W/m1 -b agent/m1 && cd $W/m1 && echo m >m.txt && g add m.txt && g commit -m m1 && g push origin agent/m1)
+(cd "$R/app" && g merge --no-ff agent/m1 -m "merge m1" && g push origin main)
+(cd "$R/app" && g worktree add $W/m2 -b agent/m2 && cd $W/m2 && echo n >n.txt && g add n.txt && g commit -m m2 && g push origin agent/m2)
+(cd "$R/app" && g worktree add $W/m3 -b agent/m3)
+out=$(cd "$R/app" && bash "$S/worktrees.sh" --merged --no-fetch 2>&1)
+ok "merged branch is MERGED though just touched" 'echo "$out" | grep -q "^MERGED .*worktrees/m1"' "$out"
+ok "pushed but unmerged branch is UNMERGED" 'echo "$out" | grep -q "^UNMERGED .*worktrees/m2"' "$out"
+ok "a new branch nobody committed to isn't merged" 'echo "$out" | grep -q "^UNMERGED .*worktrees/m3"' "$out"
+out=$(cd "$R/app/$W/m1" && bash "$S/worktrees.sh" --merged --apply --no-fetch 2>&1)
+ok "run from inside the worktree: refused with a hint" '[ -d "$R/app/$W/m1" ] && echo "$out" | grep -q "cd to the main checkout"' "$out"
+out=$(cd "$R/app" && bash "$S/worktrees.sh" --merged --apply --no-fetch --delete-merged-branches 2>&1)
+ok "--merged --apply removes the merged worktree" '[ ! -e "$R/app/$W/m1" ]' "$out"
+ok "--delete-merged-branches deletes its branch" '! git -C "$R/app" rev-parse -q --verify agent/m1 >/dev/null'
+ok "unmerged worktrees kept" '[ -d "$R/app/$W/m2" ] && [ -d "$R/app/$W/m3" ]'
+(cd "$R/app" && git worktree remove "$W/m2" && git worktree remove "$W/m3") >/dev/null 2>&1
+
+echo "== hooks.sh (session simulators)"
+HB="$T/hookbin"; mkdir -p "$HB"; BOOTED="$T/booted"; STOPPED="$T/stopped"; : >"$BOOTED"; : >"$STOPPED"
+cat >"$HB/xcrun" <<EOF
+#!/bin/sh
+case "\$2" in
+  list) while read -r u; do echo "    iPhone 16 (\$u) (Booted) "; done <"$BOOTED" ;;
+  shutdown) grep -vx "\$3" "$BOOTED" >"$BOOTED.n"; mv "$BOOTED.n" "$BOOTED"; echo "\$3" >>"$STOPPED" ;;
+esac
+EOF
+printf '#!/bin/sh\necho "List of devices attached"\n' >"$HB/adb"
+chmod +x "$HB/xcrun" "$HB/adb"
+U() { printf '%s1111111-1111-1111-1111-111111111111' "$1"; }
+hk() { local who="$1"; shift; PATH="$HB:$PATH" RD_HOOK_SYNC=1 RD_AGENT_PID="$who" bash "$S/hooks.sh" "$@"; }
+sleep 300 & P1=$!
+sleep 300 & P2=$!
+U A >"$BOOTED"; echo >>"$BOOTED"
+echo '{"session_id":"s1","hook_event_name":"SessionStart","source":"startup"}' | hk "$P1 sleep" session-start
+U B >>"$BOOTED"; echo >>"$BOOTED"
+echo '{"session_id":"s2","hook_event_name":"SessionStart","source":"startup"}' | hk "$P2 sleep" session-start
+echo '{"session_id":"s1","hook_event_name":"SessionEnd","reason":"prompt_input_exit"}' | hk "$P1 sleep" session-end
+ok "another session still running: nothing shut down" '[ ! -s "$STOPPED" ]' "$(cat "$HOME/.disk-jockey/sessions/log" 2>&1)"
+echo '{"session_id":"s2","hook_event_name":"SessionEnd","reason":"other"}' | hk "$P2 sleep" session-end
+ok "last session out: devices booted during sessions shut down" 'grep -qx "$(U B)" "$STOPPED"' "$(cat "$HOME/.disk-jockey/sessions/log" 2>&1)"
+ok "devices running before the first session left alone" '! grep -qx "$(U A)" "$STOPPED"'
+: >"$STOPPED"
+echo '{"session_id":"s3"}' | hk "$P1 sleep" session-start
+U C >>"$BOOTED"; echo >>"$BOOTED"
+echo '{"session_id":"s4"}' | hk "$P2 sleep" session-start
+kill "$P2" 2>/dev/null; wait "$P2" 2>/dev/null
+echo '{"session_id":"s3","reason":"logout"}' | hk "$P1 sleep" session-end
+if is_windows_host; then
+  ok "crashed session: still counted on Windows (age-based), nothing shut down" '[ ! -s "$STOPPED" ]'
+  rm -f "$HOME/.disk-jockey/sessions/active/"*; rm -f "$HOME/.disk-jockey/sessions/baseline"
+  printf '%s\n' "$(U A)" >"$BOOTED"
+else
+  ok "a crashed session (process gone) doesn't block cleanup" 'grep -qx "$(U C)" "$STOPPED"' "$(cat "$HOME/.disk-jockey/sessions/log" 2>&1)"
+fi
+: >"$STOPPED"
+echo '{"session_id":"s5","source":"startup"}' | hk "$P1 sleep" session-start
+U D >>"$BOOTED"; echo >>"$BOOTED"
+echo '{"session_id":"s5","reason":"clear"}' | hk "$P1 sleep" session-end
+ok "/clear doesn't shut anything down" '[ ! -s "$STOPPED" ]'
+echo '{"session_id":"s6","source":"clear"}' | hk "$P1 sleep" session-start
+echo '{"session_id":"s6","reason":"prompt_input_exit"}' | hk "$P1 sleep" session-end
+ok "after /clear, exit still shuts down what was booted before it" 'grep -qx "$(U D)" "$STOPPED"' "$(cat "$HOME/.disk-jockey/sessions/log" 2>&1)"
+: >"$STOPPED"; U E >>"$BOOTED"; echo >>"$BOOTED"
+hk "$P1 sleep" session-end --session never-started </dev/null
+ok "no record of a start: nothing shut down" '[ ! -s "$STOPPED" ]'
+kill "$P1" 2>/dev/null; wait "$P1" 2>/dev/null
+ok "print gives a settings.json snippet" 'bash "$S/hooks.sh" print | grep -q "\"SessionEnd\""'
+ok "session-start --guard warns on low disk" 'hk "1 none" session-start --session g1 --guard 999999G </dev/null | grep -q "LOW DISK"'
+
 echo "== preflight.sh / disk-guard.sh"
 ok "preflight runs" 'bash "$S/preflight.sh" >/dev/null 2>&1'
 ok "guard warns under threshold" 'bash "$S/disk-guard.sh" 999999G | grep -q "LOW DISK"'
@@ -206,7 +315,7 @@ DJ="$REPO_ROOT/bin/disk-jockey"
 ok "command: version matches VERSION" '[ "$(bash "$DJ" --version)" = "disk-jockey $(cat "$REPO_ROOT/VERSION")" ]'
 ok "command: unknown subcommand exits 2" 'bash "$DJ" nope >/dev/null 2>&1; [ $? = 2 ]'
 ok "command: subcommands reach their script" 'bash "$DJ" clean --help | grep -q "Usage: clean.sh"'
-ok "command: every subcommand has --help" 'for c in preflight scan clean worktrees sweep schedule guard dj; do bash "$DJ" $c --help 2>/dev/null | grep -q "Usage" || exit 1; done'
+ok "command: every subcommand has --help" 'for c in preflight scan clean worktrees sweep schedule guard dj quarantine hooks; do bash "$DJ" $c --help 2>/dev/null | grep -q "Usage" || exit 1; done'
 if command -v git >/dev/null 2>&1 && command -v tar >/dev/null 2>&1; then
   # Install from a snapshot of the working tree (committed or not) into a throwaway home.
   SRC="$T/src"; mkdir -p "$SRC"

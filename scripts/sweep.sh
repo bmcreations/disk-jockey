@@ -10,6 +10,7 @@ Usage: sweep.sh [options] [root ...]
   --days N     a project is idle when it has no commit and no git index change in N days (default 14)
   --depth N    how deep to look for projects under each root (default 5)
   --apply      delete (default is a dry run)
+  --quarantine / --no-quarantine   move to quarantine instead of deleting, or override it for this run
 Guards: only deletes a directory when its build-file sibling exists (build/ next to build.gradle, target/ next to
 Cargo.toml, ...), never deletes anything git tracks (committed Pods/ stay), skips projects a process is working in.
 EOF
@@ -22,6 +23,8 @@ while [ $# -gt 0 ]; do
     --days) days="$2"; shift ;;
     --depth) depth="$2"; shift ;;
     --apply) apply=1 ;;
+    --quarantine) export RD_QUARANTINE=1 ;;
+    --no-quarantine) export RD_QUARANTINE=0 ;;
     -h | --help) usage; exit 0 ;;
     -*) log "unknown argument: $1"; usage; exit 2 ;;
     *) roots+=("$1") ;;
@@ -40,7 +43,9 @@ have git || { log "git not found"; exit 2; }
 cwds=""
 load_cwds "$apply"
 now=$(date +%s)
-total=0
+total=0 quar=0
+q_enabled && quar=1
+[ "$apply" = 1 ] && q_purge_expired
 
 # Projects: repos found under the roots, plus every linked worktree git knows about for them.
 # Agent worktrees often sit deep inside a repo (e.g. repo/.claude/worktrees/NAME), beyond --depth.
@@ -54,7 +59,7 @@ find_projects() {
     norm_path "$repo"; echo
     [ -d "$repo/.git" ] && git -C "$repo" worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p' |
       while IFS= read -r w; do norm_path "$w"; echo; done
-  done | sort -u
+  done | sort -u | grep -vF "$RD_QDIR/"
 }
 
 has_sibling() { # dir pattern...
@@ -108,15 +113,25 @@ while IFS= read -r proj; do
     kb=$(printf '%s\n' "$a" | size_kb)
     [ "$kb" -gt 0 ] || continue
     total=$((total + kb))
+    if [ "$apply" = 1 ] && ! remove_path "$a" sweep "$kb"; then
+      printf '%s %s  %s\n' "$(paint "$C_Y" 8 kept)" "$(tilde "$a")" "$C_DIM${RD_Q_ERR:-delete failed}$C_0"
+      total=$((total - kb))
+      continue
+    fi
     printf '%s %s\n' "$(paint "$C_B" 8 "$(human "$kb")")" "$(tilde "$a")"
-    [ "$apply" = 1 ] && rm -rf -- "$a"
   done < <(find "$proj" -mindepth 1 -name .git -prune -o -type d \( -name node_modules -o -name build -o -name .gradle \
     -o -name .cxx -o -name .kotlin -o -name DerivedData -o -name .build -o -name Pods -o -name target -o -name .next \
     -o -name .turbo -o -name .nuxt -o -name .expo -o -name .svelte-kit -o -name .venv \) -prune -print 2>/dev/null)
 done < <(find_projects)
 
 echo
-if [ "$apply" = 1 ]; then
+if [ "$quar" = 1 ]; then
+  if [ "$apply" = 1 ]; then
+    echo "$C_B${C_M}Moved $(human "$total")$C_0 of build outputs to quarantine. Space returns when purged (disk-jockey quarantine purge --all)."
+  else
+    echo "$C_B${C_G}Would move $(human "$total")$C_0 to quarantine from projects idle >= ${days}d. Re-run with --apply."
+  fi
+elif [ "$apply" = 1 ]; then
   echo "$C_B${C_G}Removed $(human "$total")$C_0 of build outputs from projects idle >= ${days}d."
 else
   echo "$C_B${C_G}Would remove $(human "$total")$C_0 from projects idle >= ${days}d. Re-run with --apply."

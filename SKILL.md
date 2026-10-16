@@ -18,6 +18,7 @@ All scripts are in `scripts/`, read-only by default, and need only bash 3.2+ (st
 - **Tier 3 is never deleted by you.** Show the size and give the user the command.
 - **Never hand-roll `rm -rf`** for something the scripts don't cover. Add a line to `targets.conf` instead so it gets the guards: protected paths, symlink refusal, busy-process skip.
 - **Never `git worktree remove --force` or delete branches** unless the user names the worktree or branch and accepts losing its uncommitted changes.
+- **Respect the user's quarantine setting.** Check `scripts/quarantine.sh status` before `--apply`. If it's on, cleanup moves items aside instead of deleting them, which frees no space until they're purged. When the disk is critically low and quarantine is on, say so and ask before using `--no-quarantine` or `quarantine purge`; never change the setting yourself.
 - Protected regardless of config: `~/.android/debug.keystore`, `~/.gradle/gradle.properties` (signing secrets), `~/.ssh`, `~/.gnupg`, Keychains, provisioning profiles, agent settings and skills (`~/.claude/skills`, `~/.agents/skills`). Directories containing them are protected too.
 
 ## Interactive mode is for humans
@@ -66,7 +67,21 @@ Finds every linked worktree of every repo under the roots, including ones nested
 | LOCKED | `git worktree lock`ed | Leave |
 | STALE-REF | Directory gone, git still lists it | `--apply` prunes the entry |
 
-Roots default to `~/code ~/dev ~/src ~/Projects ~/Developer ~/workspace ~/repos ~/git ~/work` and IDE project folders, or `RD_ROOTS="a:b"`. Removing a worktree keeps its branch, so committed work survives.
+Roots default to `~/code ~/dev ~/src ~/Projects ~/Developer ~/workspace ~/repos ~/git ~/work` and IDE project folders, or `RD_ROOTS="a:b"`. Removing a worktree keeps its branch, so committed work survives. Worktrees that tools keep elsewhere (`~/.codex/worktrees`, `~/.cursor/worktrees`, Conductor workspaces) are found through their main repo.
+
+**After your own PR merges** (you opened it from a worktree, and the user or `gh pr view` says it's merged), clean up without waiting for the idle period:
+```bash
+cd <main checkout> && scripts/worktrees.sh --merged --apply
+```
+`--merged` acts only on clean worktrees whose PR is merged (via `gh`) or whose branch is merged into main or `origin/HEAD`. It scopes to the repo you're in. Run it from the main checkout: from inside the worktree it reports IN-USE and does nothing. This is safe to do without asking when the worktree is one you created for that PR; for other merged worktrees, show the dry run first.
+
+### Undo (opt-in quarantine)
+```bash
+scripts/quarantine.sh status | list
+scripts/quarantine.sh restore --last | ID | ORIGINAL_PATH
+scripts/quarantine.sh purge [--all]
+```
+Off by default. When the user wants a way back, offer `--quarantine` on `clean.sh`, `sweep.sh` or `worktrees.sh` for one run, or `quarantine.sh on --days N` to make it the default (their call). Worktrees are moved with `git worktree move`, so a quarantined REVIEW worktree keeps its uncommitted changes and restore re-registers it. Tool-run cleanups are skipped while it's on (they can't be undone). Items older than the retention are purged on the next `--apply`.
 
 ### 4. Tiered cache cleanup
 ```bash
@@ -89,15 +104,17 @@ Compare free space before and after. If much less was freed than expected on mac
 
 ### 7. Prevent (offer once the disk is healthy)
 - **Scheduled cleanup:** `scripts/schedule.sh install --threshold 50G` runs tier 1 daily, only when free space drops below the threshold (launchd on macOS, systemd user timer on Linux, Task Scheduler on Windows).
-- **Agent guard:** `scripts/disk-guard.sh 20G` prints a warning when space is low; wire it into an agent SessionStart hook so agents see it before heavy work.
-- **Worktree hygiene:** remove a worktree when its PR is merged; run `worktrees.sh` weekly.
-- **Per-task cleanup:** at the end of a task, `xcrun simctl shutdown all` for simulators the task booted, close emulators it started, and stop Gradle daemons.
+- **Session hooks:** `scripts/hooks.sh print` shows a Claude Code `settings.json` snippet. SessionStart records which simulators and emulators are running and warns when free space is low; when the last agent session exits, SessionEnd shuts down what was booted since (nothing while another session runs). Show the user the snippet; don't edit their `settings.json` without consent. Other agents can call `hooks.sh session-start --session ID` and `session-end --session ID`.
+- **Worktree hygiene:** add a line to the project's `CLAUDE.md` / `AGENTS.md`: "After a PR from a worktree merges, run `disk-jockey worktrees --merged --apply` from the main checkout."
+- **Per-task cleanup:** without the hooks, at the end of a task shut down simulators the task booted (`xcrun simctl shutdown UDID`), close emulators it started, and stop Gradle daemons when no build runs.
 - **Transcript retention:** agent transcripts (`~/.claude/projects`) grow without limit unless retention is configured. Point the user to their agent's retention setting.
 
 ## Failure modes to tell the user about
 
 - **Swap refills the disk.** Cleanup without fixing memory pressure buys hours, not days.
 - **Snapshots hide freed space.** Deleted files stay on disk until APFS snapshots are thinned or the staged update installs.
+- **Quarantine holds space.** Moving to quarantine frees nothing until a purge. Items on a different disk than `~/.disk-jockey` are left in place rather than copied. A quarantined worktree still has its branch checked out, so that branch can't be checked out elsewhere until it's restored or purged.
+- **Session hooks shut down devices the user booted mid-session too** (everything booted after the first session started). Simulators keep their data; emulators save quickboot state.
 - **Rebuild cost.** Clearing DerivedData, Gradle caches or `build/` makes the next build cold. Don't do it right before a demo or release build.
 - **`Xcode/Archives` holds dSYMs.** Deleting them breaks crash symbolication for shipped builds. Tier 3 for that reason.
 - **AVD and simulator deletion loses app state** (logins, test data). Only quickboot snapshots are tier 1.

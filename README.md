@@ -52,6 +52,7 @@ disk-jockey preflight       # memory, swap and snapshots, before touching files
 disk-jockey scan            # where the space is, by tier
 disk-jockey worktrees ~/dev # stale agent worktrees
 disk-jockey clean           # dry run; add --apply to act
+disk-jockey quarantine on   # optional: move instead of delete, with undo
 ```
 
 Arrow keys move, space toggles, Enter continues. Every command takes `--help`.
@@ -73,7 +74,7 @@ Then run `~/.agents/skills/disk-jockey/bin/disk-jockey`, or the scripts in `scri
 
 **claude.ai:** download `disk-jockey-vX.Y.Z.zip` from [Releases](https://github.com/bmcreations/disk-jockey/releases/latest) and upload it as a custom skill.
 
-**Pin a version:** `bash install.sh --ref v0.1.0`
+**Pin a version:** `bash install.sh --ref v0.2.0`
 
 </details>
 
@@ -99,11 +100,13 @@ Then run `~/.agents/skills/disk-jockey/bin/disk-jockey`, or the scripts in `scri
 |---|---|
 | `dj.sh` | Interactive mode for humans: one-key preflight fixes, arrow-key pickers for categories and worktrees, before/after summary |
 | `preflight.sh` | Free space, load, swap, booted simulators, emulators, idle Gradle/Kotlin daemons, active builds, agent count, APFS snapshots, uptime |
-| `scan.sh` | Sizes 60+ known targets across Xcode, simulators, Android, Gradle, Kotlin/Native, Node, Python, Go, Rust, Homebrew, Docker and Playwright |
-| `worktrees.sh` | Audits every linked worktree, nested ones included. Detects squash-merged PRs with `gh` |
+| `scan.sh` | Sizes 90+ known targets across Xcode, simulators, Android, Gradle, Node, Python, Go, Rust, Flutter, Docker, editors, Electron apps, game engines and version managers |
+| `worktrees.sh` | Audits every linked worktree, nested ones included. Detects squash-merged PRs with `gh`. `--merged` cleans up right after a merge |
 | `clean.sh` | Tiered cleanup with the tools' own commands where they exist (`simctl`, `brew cleanup`, `pnpm store prune`) |
 | `sweep.sh` | `build/`, `.gradle`, `node_modules`, `target/`, `.build` in projects idle for N days |
 | `schedule.sh` | Daily tier-1 cleanup, only when free space drops below a threshold (launchd or systemd) |
+| `quarantine.sh` | Opt-in undo: cleanup moves items aside for N days instead of deleting them |
+| `hooks.sh` | Agent session hooks: shut down simulators and emulators that agent sessions booted |
 | `disk-guard.sh` | One-line low-disk warning for agent SessionStart hooks |
 
 Each script is also a `disk-jockey` subcommand: `disk-jockey scan`, `disk-jockey worktrees`, and so on (`dj.sh` is plain `disk-jockey`).
@@ -125,22 +128,50 @@ Each script is also a `disk-jockey` subcommand: `disk-jockey scan`, `disk-jockey
 - **Worktrees** are removed only via `git worktree remove`, which refuses dirty trees. The one exception is a REVIEW worktree you select yourself and confirm by typing `yes`: its uncommitted changes are discarded, its commits stay on its branch. Branches are never deleted.
 - **Sweep** deletes a build folder only next to its build file, and never anything git tracks.
 
-## Keep the floor clear
+## Undo, if you want it
+
+Off by default, because a held item frees no space until it's purged. Turn it on when you'd rather be able to take something back:
 
 ```bash
-disk-jockey schedule install --threshold 50G
+disk-jockey quarantine on --days 7   # clean, sweep and worktrees now move instead of delete
+disk-jockey quarantine list
+disk-jockey quarantine restore --last
+disk-jockey quarantine purge --all   # free the space now
 ```
 
-Warn agents before heavy work. In `~/.claude/settings.json`:
+Or for a single run: `disk-jockey clean --apply --quarantine`. Worktrees are moved with `git worktree move`, so even a REVIEW worktree's uncommitted changes come back on restore. Items older than the retention are purged on the next `--apply`. Tool-run cleanups (`npm cache clean`, `brew cleanup`) can't be undone, so they're skipped while quarantine is on, and anything on a different disk than `~/.disk-jockey` is left in place rather than copied.
+
+## Keep the floor clear
+
+**Clean up worktrees the moment a PR merges.** The agent that opened the PR knows when it merged. Tell it, or put it in your `CLAUDE.md` / `AGENTS.md`:
+
+```bash
+cd <main checkout> && disk-jockey worktrees --merged --apply
+```
+
+`--merged` only touches clean worktrees whose PR is merged (checked with `gh`) or whose branch is merged into main, regardless of how recently they were used. Run from inside the worktree itself, it refuses and tells you where to `cd`.
+
+**Shut down simulators and emulators when the agents are done.** `disk-jockey hooks` prints a Claude Code `settings.json` snippet. The first session to start records what's already running; when the last one exits, everything booted since is shut down (simulators keep their data). While any other session is running, nothing is touched. The same hook warns agents when free space is low.
 
 ```json
 {
   "hooks": {
     "SessionStart": [
-      { "hooks": [ { "type": "command", "command": "~/.agents/skills/disk-jockey/scripts/disk-guard.sh 20G" } ] }
+      { "hooks": [ { "type": "command", "command": "bash ~/.agents/skills/disk-jockey/scripts/hooks.sh session-start --guard 20G", "timeout": 10 } ] }
+    ],
+    "SessionEnd": [
+      { "hooks": [ { "type": "command", "command": "bash ~/.agents/skills/disk-jockey/scripts/hooks.sh session-end", "timeout": 15 } ] }
     ]
   }
 }
+```
+
+Other agents can call `hooks.sh session-start --session ID` and `session-end --session ID` from their own hooks.
+
+**Daily safety net.** Tier 1 cleanup, only when free space drops below a threshold:
+
+```bash
+disk-jockey schedule install --threshold 50G
 ```
 
 <details>

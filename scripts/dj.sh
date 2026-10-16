@@ -15,7 +15,8 @@ if [ ! -t 1 ] && [ -z "${RD_ALLOW_PIPE:-}" ]; then
   exit 2
 fi
 
-CATS=("Xcode & Simulators" "Android & JVM" "IDEs" "JavaScript" "Python & ML" "Go & Rust" "Containers" "Browsers" "Homebrew" ".NET" "System" "Agents" "Other")
+CATS=("Xcode & Simulators" "Android & JVM" "IDEs" "JavaScript" "Python & ML" "Go & Rust" "Toolchains" "Containers"
+  "Browsers & testing" "Desktop apps" "Game engines" "Homebrew" ".NET" "System" "Agents" "Other")
 
 ask() { # question default(y|n): 0 for yes
   local a d="${2:-n}" hint="[y/N]"
@@ -31,6 +32,10 @@ note() { printf '%s%s%s\n' "$C_DIM" "$*" "$C_0"; }
 
 before=$(free_kb)
 printf '\n  %s(%s)%s  %sdisk-jockey%s %s%s   free %s%s\n' "$C_P" "o" "$C_0" "$C_B" "$C_0" "$C_DIM" "$RD_VERSION" "$(human "$before")" "$C_0"
+if q_enabled; then
+  note "  Quarantine is on: everything you clear is held for $(q_days) days (undo: disk-jockey quarantine restore)."
+  note "  Held items don't free space until purged."
+fi
 
 # ---------------------------------------------------------------- 1. preflight
 step "1/4" "Preflight: is it really files?"
@@ -437,7 +442,11 @@ EOF
   if [ -n "$reviews" ]; then
     echo
     printf '  %sThese worktrees have work that exists nowhere else:%s\n%s' "$C_B$C_Y" "$C_0" "$reviews"
-    echo "  Uncommitted changes will be permanently deleted. Local commits stay on their branches."
+    if q_enabled; then
+      echo "  They go to quarantine with their uncommitted changes for $(q_days) days, then are deleted."
+    else
+      echo "  Uncommitted changes will be permanently deleted. Local commits stay on their branches."
+    fi
     printf '  Type %syes%s to include them: ' "$C_B" "$C_0"
     local answer; read -r answer || answer=""
     if [ "$answer" != yes ]; then
@@ -459,7 +468,7 @@ if [ -n "$(default_roots)" ]; then
   pick_worktrees || { echo "Nothing changed."; exit 0; }
   sw=$(NO_COLOR=1 bash "$D/sweep.sh" 2>/dev/null | tail -1)
   case "$sw" in
-    "Would remove 0K"*) note "No build outputs in idle projects." ;;
+    "Would remove 0K"* | "Would move 0K"*) note "No build outputs in idle projects." ;;
     *) printf '%s\n' "$sw" | sed 's/ Re-run with --apply\.//'; ask "Clear them?" && do_sweep=1 ;;
   esac
 else
@@ -488,12 +497,13 @@ ask "Go?" || { echo "Nothing changed."; exit 0; }
 if [ "$do_wt" = 1 ]; then
   sel_args=()
   for p in "${wt_paths[@]}"; do sel_args+=(--select "$p"); done
-  FORCE_COLOR=${C_0:+1} bash "$D/worktrees.sh" --apply "${sel_args[@]}" 2>/dev/null | grep -E 'removed|refused|left in place|linked'
+  FORCE_COLOR=${C_0:+1} bash "$D/worktrees.sh" --apply "${sel_args[@]}" 2>/dev/null | grep -E 'removed|quarantined|refused|left in place|linked|Moved'
 fi
 [ "$do_sweep" = 1 ] && FORCE_COLOR=${C_0:+1} bash "$D/sweep.sh" --apply 2>/dev/null | tail -1
 
 after=$(free_kb)
 printf '\n  %sFree: %s -> %s (+%s)%s\n' "$C_B$C_G" "$(human "$before")" "$(human "$after")" "$(human $((after - before)))" "$C_0"
+q_enabled && note "  Quarantined items free their space when purged: disk-jockey quarantine purge --all"
 [ "$reboot_hint" = 1 ] && note "  Reboot when convenient: it deletes swap files and releases snapshot-pinned space."
 
 if bash "$D/schedule.sh" status 2>/dev/null | grep -qi 'not installed'; then

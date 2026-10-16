@@ -30,6 +30,10 @@ norm_path() {
 # $HOME in the same canonical form, so "is this under home" checks agree with normalized paths.
 HOME=$(norm_path "$HOME")
 export HOME
+# Our own state: config, quarantine, session records.
+RD_STATE="${RD_STATE:-$HOME/.disk-jockey}"
+[ -d "$RD_STATE" ] && RD_STATE=$(norm_path "$RD_STATE")
+RD_QDIR="$RD_STATE/quarantine"
 
 # Per-run scratch dir (process lists, Windows facts). Old ones are swept on each run.
 RD_TMP="${TMPDIR:-/tmp}/disk-jockey-$(id -u 2>/dev/null || echo 0)"
@@ -190,6 +194,7 @@ $HOME/.claude/skills
 $HOME/.agents/skills
 $HOME/Documents
 $HOME/Desktop
+$RD_STATE
 EOF
   if [ -n "${RD_PROTECT:-}" ]; then printf '%s\n' "$RD_PROTECT" | tr ':' '\n'; fi
 }
@@ -204,6 +209,104 @@ safe_to_delete() {
     [ "$p" = "$q" ] && return 1
     case "$q" in "$p"/*) return 1 ;; esac
   done < <(rd_protected)
+  return 0
+}
+
+# ---- Quarantine: opt-in undo. Off unless `disk-jockey quarantine on`, --quarantine, or RD_QUARANTINE=1.
+# Items are moved (a rename, same disk only) to $RD_QDIR/<id>/data with a meta file beside them,
+# and deleted for real when purged: after quarantine_days, or by `disk-jockey quarantine purge`.
+
+rd_conf() { # key default
+  local v=""
+  [ -f "$RD_STATE/config" ] && v=$(sed -n "s/^$1=//p" "$RD_STATE/config" | tail -n 1)
+  printf '%s' "${v:-$2}"
+}
+rd_conf_set() { # key value
+  mkdir -p "$RD_STATE" || return 1
+  local f="$RD_STATE/config"
+  { [ -f "$f" ] && grep -v "^$1=" "$f"; printf '%s=%s\n' "$1" "$2"; } >"$f.$$" && mv "$f.$$" "$f"
+}
+q_enabled() {
+  case "${RD_QUARANTINE:-}" in 1) return 0 ;; 0) return 1 ;; esac
+  [ "$(rd_conf quarantine off)" = on ]
+}
+q_days() { rd_conf quarantine_days 7; }
+q_meta() { sed -n "s/^$2=//p" "$1/meta" 2>/dev/null | head -n 1; } # item-dir key
+
+# Device a path lives on. A move to another device is a copy, which needs the free space we lack.
+dev_of() {
+  if is_win; then norm_path "$1" | cut -d/ -f2; return; fi
+  stat -c %d "$1" 2>/dev/null || stat -f %d "$1" 2>/dev/null
+}
+
+# q_move PATH SOURCE [KIND REPO BRANCH KB]. KIND is dir or worktree (moved with git worktree move,
+# so git keeps tracking it and uncommitted changes survive). Sets RD_Q_ID, or RD_Q_ERR on failure.
+q_move() {
+  local p="$1" src="$2" kind="${3:-dir}" repo="${4:-}" branch="${5:-}" kb="${6:-}" d err
+  RD_Q_ID="" RD_Q_ERR=""
+  mkdir -p "$RD_QDIR" 2>/dev/null || { RD_Q_ERR="can't create $(tilde "$RD_QDIR")"; return 1; }
+  if [ "$(dev_of "$p")" != "$(dev_of "$RD_QDIR")" ]; then
+    RD_Q_ERR="on a different disk than $(tilde "$RD_QDIR"), so moving would copy it"
+    return 1
+  fi
+  [ -n "$kb" ] || kb=$(printf '%s\n' "$p" | size_kb)
+  RD_Q_ID="$(date +%Y%m%d-%H%M%S)-$$-$RANDOM"
+  d="$RD_QDIR/$RD_Q_ID"
+  mkdir "$d" 2>/dev/null || { RD_Q_ERR="can't create $(tilde "$d")"; return 1; }
+  printf 'path=%s\nkind=%s\nsource=%s\nrepo=%s\nbranch=%s\nkb=%s\ntime=%s\n' \
+    "$p" "$kind" "$src" "$repo" "$branch" "$kb" "$(date +%s)" >"$d/meta"
+  if [ "$kind" = worktree ]; then
+    err=$(git -C "$repo" worktree move "$p" "$d/data" 2>&1)
+  else
+    err=$(mv -- "$p" "$d/data" 2>&1)
+  fi
+  if [ $? -ne 0 ] || [ ! -e "$d/data" ]; then
+    rm -rf -- "$d"
+    RD_Q_ERR=$(printf '%s' "${err:-move failed}" | head -n 1 | sed 's/^fatal: //')
+    RD_Q_ID=""
+    return 1
+  fi
+}
+
+# Delete PATH, or quarantine it when that's on. Sets RD_REMOVED to deleted or quarantined.
+remove_path() { # path source [kb]
+  RD_REMOVED=""
+  if q_enabled; then
+    q_move "$1" "$2" dir "" "" "${3:-}" || return 1
+    RD_REMOVED=quarantined
+    return 0
+  fi
+  rm -rf -- "$1" 2>/dev/null || return 1
+  RD_REMOVED=deleted
+}
+
+q_purge_item() { # item-dir
+  local d="$1" kind repo
+  kind=$(q_meta "$d" kind) repo=$(q_meta "$d" repo)
+  if [ "$kind" = worktree ] && [ -n "$repo" ] && [ -d "$repo" ] && [ -e "$d/data" ]; then
+    git -C "$repo" worktree remove --force "$d/data" >/dev/null 2>&1
+  fi
+  rm -rf -- "$d" 2>/dev/null
+  # Bazel-style read-only trees: make writable and retry.
+  [ -e "$d" ] && chmod -R u+w "$d" 2>/dev/null && rm -rf -- "$d" 2>/dev/null
+  [ "$kind" = worktree ] && [ -n "$repo" ] && [ -d "$repo" ] && git -C "$repo" worktree prune 2>/dev/null
+  [ ! -e "$d" ]
+}
+
+# Purge items older than the retention. Prints a line only when something was purged.
+q_purge_expired() {
+  [ -d "$RD_QDIR" ] || return 0
+  local days now d t s n=0 kb=0
+  days=$(q_days) now=$(date +%s)
+  for d in "$RD_QDIR"/*; do
+    [ -f "$d/meta" ] || continue
+    t=$(q_meta "$d" time)
+    [ $(((now - ${t:-0}) / 86400)) -ge "$days" ] || continue
+    s=$(q_meta "$d" kb)
+    kb=$((kb + ${s:-0}))
+    q_purge_item "$d" && n=$((n + 1))
+  done
+  [ "$n" -gt 0 ] && echo "Purged $n quarantined item(s) older than ${days}d ($(human "$kb"))."
   return 0
 }
 
@@ -400,12 +503,15 @@ win_dir_free() {
 category_of() {
   case "$1" in
     xcode-* | xctest-* | sim-* | simulators | coresim-* | swift* | cocoapods-*) echo "Xcode & Simulators" ;;
-    android-studio-* | jetbrains-*) echo "IDEs" ;;
+    android-studio-* | jetbrains-* | vscode-* | cursor-*) echo "IDEs" ;;
     android-* | avd-* | gradle-* | kotlin-* | konan-* | maven-*) echo "Android & JVM" ;;
-    npm-* | pnpm-* | yarn-* | bun-*) echo "JavaScript" ;;
-    pip-* | uv-* | ml-models) echo "Python & ML" ;;
-    go-* | cargo-*) echo "Go & Rust" ;;
-    playwright-* | puppeteer-*) echo "Browsers" ;;
+    npm-* | pnpm-* | yarn-* | bun-* | deno-*) echo "JavaScript" ;;
+    pip-* | uv-* | conda-* | poetry-* | ml-models) echo "Python & ML" ;;
+    go-* | cargo-* | rustup-*) echo "Go & Rust" ;;
+    pub-* | flutter-* | version-managers | bazel* | nix-*) echo "Toolchains" ;;
+    unity-* | unreal-*) echo "Game engines" ;;
+    slack-* | discord-* | electron-*) echo "Desktop apps" ;;
+    playwright-* | puppeteer-* | selenium-* | maestro-*) echo "Browsers & testing" ;;
     brew-*) echo "Homebrew" ;;
     agent-state | claude-*) echo "Agents" ;;
     docker-* | podman-*) echo "Containers" ;;

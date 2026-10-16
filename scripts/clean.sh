@@ -10,6 +10,8 @@ Usage: clean.sh [options]
   --only id1,id2         only these target ids
   --skip id1,id2         skip these target ids
   --if-free-below SIZE   exit without doing anything unless free space < SIZE (e.g. 50G)
+  --quarantine           move to quarantine instead of deleting (undo with: disk-jockey quarantine restore)
+  --no-quarantine        delete directly even when quarantine is on
   -q, --quiet            no output except errors
 EOF
 }
@@ -22,6 +24,8 @@ while [ $# -gt 0 ]; do
     --only) only=",$2,"; shift ;;
     --skip) skip=",$2,"; shift ;;
     --if-free-below) threshold="$2"; shift ;;
+    --quarantine) export RD_QUARANTINE=1 ;;
+    --no-quarantine) export RD_QUARANTINE=0 ;;
     -q | --quiet) quiet=1 ;;
     -h | --help) usage; exit 0 ;;
     *) log "unknown argument: $1"; usage; exit 2 ;;
@@ -46,8 +50,17 @@ mode=DRY-RUN
 mc="$C_C"
 [ "$apply" = 1 ] && mc="$C_P"
 say "${C_B}${mc}[$mode]$C_0 $(date '+%Y-%m-%d %H:%M') tiers <= $max_tier, free $(human "$before")"
+quar=0
+if q_enabled; then
+  quar=1
+  say "${C_DIM}Quarantine on: items move to $(tilde "$RD_QDIR") for $(q_days)d instead of being deleted.$C_0"
+fi
+if [ "$apply" = 1 ]; then
+  purged=$(q_purge_expired)
+  [ -n "$purged" ] && say "$purged"
+fi
 
-planned=0 failures=0
+planned=0 failures=0 kept=0 skipped_cmd=0
 while IFS='|' read -r tier id os paths action busy note; do
   [ "$tier" -le "$max_tier" ] || continue
   [ -n "$only" ] && case "$only" in *",$id,"*) ;; *) continue ;; esac
@@ -59,6 +72,8 @@ while IFS='|' read -r tier id os paths action busy note; do
       [ "${RD_NO_CMD:-}" = 1 ] && continue
       c="${action#cmd:}"
       tool_ready "${c%% *}" || continue
+      # A tool's own clean command can't be undone.
+      if [ "$quar" = 1 ]; then skipped_cmd=$((skipped_cmd + 1)); continue; fi
       if is_busy "$busy"; then say "  ${C_Y}skip$C_0  $id ${C_DIM}(busy: $RD_BUSY_BY matches '$busy')$C_0"; continue; fi
       kb=$(expand_paths "$paths" | size_kb)
       planned=$((planned + kb))
@@ -82,9 +97,17 @@ while IFS='|' read -r tier id os paths action busy note; do
         fi
         kb=$(printf '%s\n' "$m" | size_kb)
         planned=$((planned + kb))
-        say "  ${C_P}rm$C_0    $C_B$(human "$kb")$C_0  $(tilde "$m")  ${C_DIM}[$id]$C_0"
-        if [ "$apply" = 1 ]; then
-          rm -rf -- "$m" 2>/dev/null || { say "        ${C_R}failed:$C_0 $(tilde "$m")"; failures=$((failures + 1)); }
+        verb="${C_P}rm$C_0   "
+        [ "$quar" = 1 ] && verb="${C_M}hold$C_0 "
+        say "  $verb $C_B$(human "$kb")$C_0  $(tilde "$m")  ${C_DIM}[$id]$C_0"
+        if [ "$apply" = 1 ] && ! remove_path "$m" "clean:$id" "$kb"; then
+          if [ -n "${RD_Q_ERR:-}" ]; then
+            say "        ${C_Y}kept:$C_0 $RD_Q_ERR"
+            kept=$((kept + 1)); planned=$((planned - kb))
+          else
+            say "        ${C_R}failed:$C_0 $(tilde "$m")"
+            failures=$((failures + 1))
+          fi
         fi
       done <<EOF
 $matches
@@ -93,6 +116,17 @@ EOF
   esac
 done < <(each_target)
 
+[ "$skipped_cmd" -gt 0 ] && say "${C_DIM}Skipped $skipped_cmd tool-run cleanup(s) (npm, brew, ...): they can't be undone. Add --no-quarantine to include them.$C_0"
+if [ "$quar" = 1 ]; then
+  if [ "$apply" = 1 ]; then
+    say "${C_B}${C_M}Moved $(human "$planned") to quarantine.$C_0 Space returns when it's purged: after $(q_days)d, or now with disk-jockey quarantine purge --all."
+    say "${C_DIM}Undo: disk-jockey quarantine restore --last (or list, then restore ID).$C_0"
+    [ "$failures" -gt 0 ] && exit 1
+  else
+    say "${C_B}${C_G}Would move ~$(human "$planned") to quarantine.$C_0 Re-run with --apply."
+  fi
+  exit 0
+fi
 if [ "$apply" = 1 ]; then
   after=$(free_kb)
   freed=$((after - before))

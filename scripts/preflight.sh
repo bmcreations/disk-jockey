@@ -182,6 +182,12 @@ for eng in docker podman; do
   fi
 done
 
+# --- Quarantine holds space until purged
+if [ -d "$RD_QDIR" ]; then
+  qkb=$(printf '%s\n' "$RD_QDIR" | size_kb)
+  [ "${qkb:-0}" -gt 0 ] && row INFO quarantine "$(human "$qkb")" "Held for undo, not freed yet. disk-jockey quarantine list; purge --all to free it."
+fi
+
 # --- Uptime: swap and temp only fully clear on reboot
 if is_mac; then
   # Format: { sec = 1791990000, usec = 123 } ... ; anchor on "{ sec" so usec isn't matched.
