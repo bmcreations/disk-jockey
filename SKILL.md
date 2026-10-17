@@ -113,6 +113,7 @@ Compare free space before and after. If much less was freed than expected on mac
 
 - **Swap refills the disk.** Cleanup without fixing memory pressure buys hours, not days.
 - **Snapshots hide freed space.** Deleted files stay on disk until APFS snapshots are thinned or the staged update installs.
+- **Agent scratch in /tmp.** `claude-scratch` clears Claude Code session scratchpads (`/private/tmp/claude-UID/PROJECT/SESSION` on macOS, `/tmp/...` on Linux) untouched for 3 days, yours only. A session resumed after that loses its scratch files, never its transcript.
 - **Quarantine holds space.** Moving to quarantine frees nothing until a purge. Items on a different disk than `~/.disk-jockey` are left in place rather than copied. A quarantined worktree still has its branch checked out, so that branch can't be checked out elsewhere until it's restored or purged.
 - **Session hooks shut down devices the user booted mid-session too** (everything booted after the first session started). Simulators keep their data; emulators save quickboot state.
 - **Rebuild cost.** Clearing DerivedData, Gradle caches or `build/` makes the next build cold. Don't do it right before a demo or release build.

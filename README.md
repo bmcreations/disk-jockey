@@ -123,6 +123,7 @@ Each script is also a `disk-jockey` subcommand: `disk-jockey scan`, `disk-jockey
 - **Protected paths** can't be deleted, nor any folder containing them: `debug.keystore`, `gradle.properties` (signing secrets), `.ssh`, Keychains, provisioning profiles, agent settings.
 - **Busy checks.** A target is skipped while a process using it runs (`xcodebuild`, `GradleDaemon`, `qemu-system`).
 - **In-use checks fail safe.** Worktrees and projects with a process inside are skipped (read from `/proc` on Linux and Git Bash, `lsof` on macOS). On Windows, each folder is also test-renamed right before deletion: Windows refuses that while any program has the folder open. If processes can't be inspected at all, `--apply` refuses to run rather than assuming nothing is in use.
+- **Only your files.** Deletion happens under your home folder, plus agent scratch two levels inside `/tmp` (Claude Code keeps per-session scratchpads in `/private/tmp/claude-UID` on macOS), and only folders you own that nobody touched for 3 days.
 - **Symlinks** are never followed or deleted.
 - **Color** only on an interactive terminal. Agents reading through a pipe get plain text. `NO_COLOR=1` turns it off, `FORCE_COLOR=1` forces it.
 - **Worktrees** are removed only via `git worktree remove`, which refuses dirty trees. The one exception is a REVIEW worktree you select yourself and confirm by typing `yes`: its uncommitted changes are discarded, its commits stay on its branch. Branches are never deleted.
