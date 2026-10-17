@@ -111,6 +111,20 @@ ok "tier 3 agent transcripts kept" '[ -d "$HOME/.claude/projects" ]'
 [ "$has_symlinks" = 1 ] && ok "symlink target kept" '[ -d "$HOME/elsewhere" ]'
 ok "--if-free-below skips when space is fine" 'bash "$S/clean.sh" --apply --if-free-below 1K | grep -q "Nothing to do"'
 
+echo "== temp scratch (Claude Code /tmp/claude-UID)"
+SC="$T/scratch/claude-999"
+blob "$SC/-proj/old-session/scratchpad"; find "$SC/-proj/old-session" -exec touch -t "$(ago 10)" {} +
+blob "$SC/-proj/live-session/scratchpad"
+printf '1|scratch-test|any|%s/*/*|stale:3|-|test\n' "$SC" >"$T/scratch.conf"
+out=$(RD_TARGETS="$T/scratch.conf" RD_IGNORE_CTIME=1 bash "$S/clean.sh" --apply 2>&1)
+ok "stale session scratch in temp removed" '[ ! -e "$SC/-proj/old-session" ]' "$out"
+ok "active session scratch kept" '[ -d "$SC/-proj/live-session" ]'
+ok "temp root's top level is never deletable" 'bash -c ". \"$S/lib.sh\"; ! safe_to_delete \"$T\" && ! safe_to_delete /tmp && ! safe_to_delete /tmp/x"'
+mkdir -p "$T/nest/home"
+ok "a temp folder that contains \$HOME is never deletable" 'HOME="$T/nest/home" bash -c ". \"$S/lib.sh\"; ! safe_to_delete \"\$(norm_path \"$T/nest\")\""'
+ok "paths with .. are refused" 'bash -c ". \"$S/lib.sh\"; ! safe_to_delete \"\$HOME/..\" && ! safe_to_delete \"\$HOME/x/../..\""'
+ok "paths outside home and temp stay off-limits" 'bash -c ". \"$S/lib.sh\"; ! safe_to_delete /usr/local/share"'
+
 echo "== worktrees.sh"
 out=$(bash "$S/worktrees.sh" "$R" 2>&1)
 ok "clean pushed worktree REMOVABLE" 'echo "$out" | grep -q "^REMOVABLE .*worktrees/done"'

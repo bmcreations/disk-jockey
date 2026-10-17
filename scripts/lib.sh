@@ -199,10 +199,29 @@ EOF
   if [ -n "${RD_PROTECT:-}" ]; then printf '%s\n' "$RD_PROTECT" | tr ':' '\n'; fi
 }
 
-# 0 if PATH may be deleted: under $HOME, not a symlink, not protected, not a parent of protected.
+# Temp roots where agents keep scratch space (Claude Code: /tmp/claude-UID, /private/tmp on macOS).
+rd_tmp_roots() {
+  printf '%s\n' /tmp /private/tmp /var/tmp
+  if [ -n "${TMPDIR:-}" ]; then printf '%s\n' "${TMPDIR%/}"; fi
+}
+
+# 0 if PATH is at least two levels inside a temp root and owned by this user (shared /tmp holds
+# other users' files and system sockets; the temp folder itself and its top level are never touched).
+safe_tmp() {
+  local p="$1" r
+  [ -O "$p" ] || return 1
+  while IFS= read -r r; do
+    case "$p" in "$r"/?*/?*) return 0 ;; esac
+  done < <(rd_tmp_roots)
+  return 1
+}
+
+# 0 if PATH may be deleted: under $HOME (or an owned temp subfolder), not a symlink, not protected,
+# not a parent of protected.
 safe_to_delete() {
   local p="$1" q
-  case "$p" in "$HOME"/?*) ;; *) return 1 ;; esac
+  case "$p" in */../* | */.. | */./* | */.) return 1 ;; esac
+  case "$p" in "$HOME"/?*) ;; *) safe_tmp "$p" || return 1 ;; esac
   [ -L "$p" ] && return 1
   while IFS= read -r q; do
     [ -z "$q" ] && continue
