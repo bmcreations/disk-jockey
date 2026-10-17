@@ -201,8 +201,12 @@ EOF
 
 # Temp roots where agents keep scratch space (Claude Code: /tmp/claude-UID, /private/tmp on macOS).
 rd_tmp_roots() {
-  printf '%s\n' /tmp /private/tmp /var/tmp
-  if [ -n "${TMPDIR:-}" ]; then printf '%s\n' "${TMPDIR%/}"; fi
+  local r
+  for r in /tmp /private/tmp /var/tmp ${TMPDIR:+"${TMPDIR%/}"}; do
+    [ -d "$r" ] || continue
+    printf '%s\n' "$r"
+    printf '%s\n' "$(norm_path "$r")" # canonical spelling too (/var -> /private/var, Windows long paths)
+  done
 }
 
 # 0 if PATH is at least two levels inside a temp root and owned by this user (shared /tmp holds
@@ -211,6 +215,7 @@ safe_tmp() {
   local p="$1" r
   [ -O "$p" ] || return 1
   while IFS= read -r r; do
+    case "$r" in /?*) ;; *) continue ;; esac # never an empty or relative root
     case "$p" in "$r"/?*/?*) return 0 ;; esac
   done < <(rd_tmp_roots)
   return 1
@@ -221,8 +226,11 @@ safe_tmp() {
 safe_to_delete() {
   local p="$1" q
   case "$p" in */../* | */.. | */./* | */.) return 1 ;; esac
-  case "$p" in "$HOME"/?*) ;; *) safe_tmp "$p" || return 1 ;; esac
   [ -L "$p" ] && return 1
+  # Compare in the canonical form the protected list uses: a path reached through a symlinked
+  # folder (/tmp, /var, a linked ~/dev) must not slip past it.
+  p="$(norm_path "$(dirname "$p")")/$(basename "$p")"
+  case "$p" in "$HOME"/?*) ;; *) safe_tmp "$p" || return 1 ;; esac
   while IFS= read -r q; do
     [ -z "$q" ] && continue
     [ "$p" = "$q" ] && return 1
