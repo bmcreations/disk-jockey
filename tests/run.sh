@@ -80,7 +80,7 @@ undefined=$(cd "$S" && for f in *.sh; do
       # Variables ($((x_kb + ..)), x_kb=) and find -name arguments aren't calls.
       grep -qE "(^|[^a-z0-9_])$fn=|-name $fn" "$f" && continue
       # macOS system commands that aren't on Linux/Windows test hosts.
-      case "$fn" in memory_pressure | vm_stat) continue ;; esac
+      case "$fn" in (memory_pressure | vm_stat) continue ;; esac
       printf '%s\n' "$defined" | grep -qx "$fn" || command -v "$fn" >/dev/null 2>&1 || echo "$f:$fn"
     done
 done)
