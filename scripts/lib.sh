@@ -361,11 +361,81 @@ win_fact() { # key
       "cpu_cores=" + (Get-CimInstance Win32_ComputerSystem).NumberOfLogicalProcessors
       $h = Get-Item -Force ($env:SystemDrive + "\hiberfil.sys")
       if ($h) { "hiberfil_kb=" + [int64]($h.Length / 1024) }
+      $o = Get-CimInstance Win32_OperatingSystem
+      if ($o) { "mem_free_pct=" + [int]($o.FreePhysicalMemory * 100 / $o.TotalVisibleMemorySize) }
       $p = Get-Item -Force ($env:SystemDrive + "\pagefile.sys")
       if ($p) { "pagefile_kb=" + [int64]($p.Length / 1024) }
     ' 2>/dev/null | tr -d '\r' >"$f"
   fi
   sed -n "s/^$1=//p" "$f" | head -n 1
+}
+
+# Swap (pagefile on Windows) in use, KB.
+swap_used_kb() {
+  if is_mac; then
+    sysctl -n vm.swapusage 2>/dev/null | sed -n 's/.*used = \([0-9.]*\)M.*/\1/p' | awk '{printf "%d", $1 * 1024}'
+  elif [ -r /proc/meminfo ]; then
+    awk '/SwapTotal/{t=$2} /SwapFree/{f=$2} END{print t-f}' /proc/meminfo
+  else
+    echo 0
+  fi
+}
+
+# Memory pressure as "LEVEL FREE_PCT SWAP_KB", LEVEL one of ok, warn, critical.
+# macOS: the kernel's own pressure level (what Activity Monitor's graph shows), plus memory_pressure's free %.
+# Linux: MemAvailable and PSI stall time. Low free % or heavy swap raise the level anywhere.
+# RD_TEST_MEM="LEVEL PCT [SWAP_KB]" overrides (tests).
+mem_state() {
+  if [ -n "${RD_TEST_MEM:-}" ]; then
+    set -- $RD_TEST_MEM
+    echo "$1 $2 ${3:-0}"
+    return
+  fi
+  local lvl=ok pct="" swap psi
+  swap=$(swap_used_kb)
+  if is_mac; then
+    case "$(sysctl -n kern.memorystatus_vm_pressure_level 2>/dev/null)" in 2) lvl=warn ;; 4) lvl=critical ;; esac
+    pct=$(memory_pressure -Q 2>/dev/null | sed -n 's/.*free percentage: *\([0-9]*\)%.*/\1/p')
+  elif is_win; then
+    pct=$(win_fact mem_free_pct)
+  elif [ -r /proc/meminfo ]; then
+    pct=$(awk '/MemTotal/{t=$2} /MemAvailable/{a=$2} END{if (t > 0) printf "%d", a * 100 / t}' /proc/meminfo)
+    # PSI: share of the last 10s in which some task waited on memory.
+    psi=$(awk '/^some/{for (i = 1; i <= NF; i++) if ($i ~ /^avg10=/) {sub("avg10=", "", $i); printf "%d", $i}}' /proc/pressure/memory 2>/dev/null)
+    if [ -n "$psi" ]; then
+      if [ "$psi" -ge 30 ]; then lvl=critical; elif [ "$psi" -ge 10 ]; then lvl=warn; fi
+    fi
+  fi
+  if [ -n "$pct" ]; then
+    if [ "$pct" -lt 5 ]; then lvl=critical; elif [ "$pct" -lt 10 ] && [ "$lvl" = ok ]; then lvl=warn; fi
+  fi
+  [ "$lvl" = ok ] && [ "${swap:-0}" -gt $((8 * 1024 * 1024)) ] && lvl=warn
+  echo "$lvl ${pct:-?} ${swap:-0}"
+}
+
+# Resident memory and CPU by group of agent-era processes: "GROUP KB CPU% COUNT" lines.
+# RSS double-counts shared pages, so treat totals as an upper bound. Not available on Windows.
+mem_groups() {
+  is_win && return 0
+  ps -A -o rss= -o pcpu= -o args= 2>/dev/null | awk '
+    { rss = $1; cpu = $2; $1 = ""; $2 = ""; a = $0; sub(/^ +/, "", a)
+      cmd = a; sub(/ .*/, "", cmd); n = split(cmd, parts, "/"); base = parts[n]
+      g = ""
+      if (base ~ /^(awk|gawk|mawk|ps|grep|sed)$/) next # this pipeline, whose args contain the patterns
+      if (a ~ /Claude\.app\/Contents/) g = "claude-app"
+      else if (base == "claude" || a ~ /claude-code\/cli\.js/) g = "claude-sessions"
+      else if (a ~ /qemu-system|\/emulator\/emulator/) g = "emulators"
+      else if (a ~ /CoreSimulator|launchd_sim|Simulator\.app/) g = "simulators"
+      else if (a ~ /GradleDaemon|KotlinCompileDaemon|GradleWrapperMain|kotlin-daemon/) g = "jvm-daemons"
+      else if (base ~ /^(xcodebuild|swift-frontend|XCBBuildService|clang)$/) g = "xcode-builds"
+      if (g != "") { kb[g] += rss; c[g] += cpu; k[g]++ }
+    }
+    END { for (g in kb) printf "%s %d %d %d\n", g, kb[g], c[g], k[g] }'
+}
+
+# A string as a JSON string body (no surrounding quotes).
+json_str() {
+  printf '%s' "$1" | awk 'BEGIN{ORS=""} { gsub(/\\/, "\\\\"); gsub(/"/, "\\\""); gsub(/\t/, "\\t"); if (NR > 1) printf "\\n"; print }'
 }
 
 # Split a comma-separated pattern list into lines.

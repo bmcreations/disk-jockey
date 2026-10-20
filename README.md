@@ -74,7 +74,7 @@ Then run `~/.agents/skills/disk-jockey/bin/disk-jockey`, or the scripts in `scri
 
 **claude.ai:** download `disk-jockey-vX.Y.Z.zip` from [Releases](https://github.com/bmcreations/disk-jockey/releases/latest) and upload it as a custom skill.
 
-**Pin a version:** `bash install.sh --ref v0.2.0`
+**Pin a version:** `bash install.sh --ref v0.3.0`
 
 </details>
 
@@ -99,14 +99,14 @@ Then run `~/.agents/skills/disk-jockey/bin/disk-jockey`, or the scripts in `scri
 | Script | What it does |
 |---|---|
 | `dj.sh` | Interactive mode for humans: one-key preflight fixes, arrow-key pickers for categories and worktrees, before/after summary |
-| `preflight.sh` | Free space, load, swap, booted simulators, emulators, idle Gradle/Kotlin daemons, active builds, agent count, APFS snapshots, uptime |
+| `preflight.sh` | Free space, load, memory pressure, swap, memory by group (simulators, emulators, Claude sessions, the Claude app, Gradle), idle daemons, active builds, APFS snapshots, uptime |
 | `scan.sh` | Sizes 90+ known targets across Xcode, simulators, Android, Gradle, Node, Python, Go, Rust, Flutter, Docker, editors, Electron apps, game engines and version managers |
 | `worktrees.sh` | Audits every linked worktree, nested ones included. Detects squash-merged PRs with `gh`. `--merged` cleans up right after a merge |
 | `clean.sh` | Tiered cleanup with the tools' own commands where they exist (`simctl`, `brew cleanup`, `pnpm store prune`) |
 | `sweep.sh` | `build/`, `.gradle`, `node_modules`, `target/`, `.build` in projects idle for N days |
 | `schedule.sh` | Daily tier-1 cleanup, only when free space drops below a threshold (launchd or systemd) |
 | `quarantine.sh` | Opt-in undo: cleanup moves items aside for N days instead of deleting them |
-| `hooks.sh` | Agent session hooks: shut down simulators and emulators that agent sessions booted |
+| `hooks.sh` | Agent hooks: cap booted devices across sessions, warn agents under memory pressure, shut down what sessions booted |
 | `disk-guard.sh` | One-line low-disk warning for agent SessionStart hooks |
 
 Each script is also a `disk-jockey` subcommand: `disk-jockey scan`, `disk-jockey worktrees`, and so on (`dj.sh` is plain `disk-jockey`).
@@ -152,13 +152,22 @@ cd <main checkout> && disk-jockey worktrees --merged --apply
 
 `--merged` only touches clean worktrees whose PR is merged (checked with `gh`) or whose branch is merged into main, regardless of how recently they were used. Run from inside the worktree itself, it refuses and tells you where to `cd`.
 
-**Shut down simulators and emulators when the agents are done.** `disk-jockey hooks` prints a Claude Code `settings.json` snippet. The first session to start records what's already running; when the last one exits, everything booted since is shut down (simulators keep their data). While any other session is running, nothing is touched. The same hook warns agents when free space is low.
+**Keep parallel sessions from drowning the machine.** Seven sessions each booting their own simulator, emulator and Gradle build is how a 36 GB Mac ends up in swap. `disk-jockey hooks` prints a Claude Code `settings.json` snippet with three hooks:
+
+- **Device cap (PreToolUse).** Once 2 simulators or 1 emulator are booted across all sessions, booting another is denied and the agent is told which devices to reuse by UDID. Booting one that's already running is always allowed. Change the cap with `disk-jockey hooks limit --simulators 3`.
+- **Memory pressure warnings.** When macOS (or Linux PSI) reports pressure, agents get a note at session start and before builds: reuse booted devices, don't start parallel builds, stop idle daemons.
+- **Cleanup at the end (SessionEnd).** When the last session exits, everything booted since the first one started is shut down (simulators keep their data). While any other session is running, nothing is touched. Session start also warns on low disk.
+
+Unrelated tool calls exit in a few milliseconds, and a hook that times out never blocks the tool call.
 
 ```json
 {
   "hooks": {
     "SessionStart": [
       { "hooks": [ { "type": "command", "command": "bash ~/.agents/skills/disk-jockey/scripts/hooks.sh session-start --guard 20G", "timeout": 10 } ] }
+    ],
+    "PreToolUse": [
+      { "matcher": "Bash|mcp__.*", "hooks": [ { "type": "command", "command": "bash ~/.agents/skills/disk-jockey/scripts/hooks.sh pre-tool", "timeout": 5 } ] }
     ],
     "SessionEnd": [
       { "hooks": [ { "type": "command", "command": "bash ~/.agents/skills/disk-jockey/scripts/hooks.sh session-end", "timeout": 15 } ] }

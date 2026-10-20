@@ -79,6 +79,8 @@ undefined=$(cd "$S" && for f in *.sh; do
     grep -oE '[a-z][a-z0-9]*_[a-z0-9_]*' | sort -u | while IFS= read -r fn; do
       # Variables ($((x_kb + ..)), x_kb=) and find -name arguments aren't calls.
       grep -qE "(^|[^a-z0-9_])$fn=|-name $fn" "$f" && continue
+      # macOS system commands that aren't on Linux/Windows test hosts.
+      case "$fn" in memory_pressure | vm_stat) continue ;; esac
       printf '%s\n' "$defined" | grep -qx "$fn" || command -v "$fn" >/dev/null 2>&1 || echo "$f:$fn"
     done
 done)
@@ -279,6 +281,64 @@ ok "no record of a start: nothing shut down" '[ ! -s "$STOPPED" ]'
 kill "$P1" 2>/dev/null; wait "$P1" 2>/dev/null
 ok "print gives a settings.json snippet" 'bash "$S/hooks.sh" print | grep -q "\"SessionEnd\""'
 ok "session-start --guard warns on low disk" 'hk "1 none" session-start --session g1 --guard 999999G </dev/null | grep -q "LOW DISK"'
+
+echo "== hooks.sh pre-tool (device cap, memory pressure)"
+EMUS="$T/emus"; : >"$EMUS"
+cat >"$HB/adb" <<EOF
+#!/bin/sh
+if [ "\$1" = devices ]; then echo "List of devices attached"; while read -r e; do printf '%s\tdevice\n' "\$e"; done <"$EMUS"; exit 0; fi
+if [ "\$1" = -s ] && [ "\$3" = emu ] && [ "\$4" = avd ]; then echo Pixel_8; echo OK; fi
+EOF
+chmod +x "$HB/adb"
+pt() { # session json-for-tool... ; prints hook output
+  local sid="$1"; shift
+  printf '{"session_id":"%s","hook_event_name":"PreToolUse",%s}' "$sid" "$1" | PATH="$HB:$PATH" RD_TEST_MEM="${MEM:-ok 60 0}" bash "$S/hooks.sh" pre-tool
+}
+valid_json() { ! command -v python3 >/dev/null 2>&1 || printf '%s' "$1" | python3 -c 'import json,sys; json.load(sys.stdin)'; }
+bash_call() { printf '"tool_name":"Bash","tool_input":{"command":"%s"}' "$1"; }
+printf '%s\n%s\n' "$(U A)" "$(U B)" >"$BOOTED"
+out=$(pt p1 "$(bash_call "xcrun simctl boot $(U C)")")
+ok "cap reached: booting a third simulator is denied" 'echo "$out" | grep -q "\"permissionDecision\":\"deny\""' "$out"
+ok "the denial lists booted devices to reuse" 'echo "$out" | grep -q "$(U A)" && echo "$out" | grep -q "$(U B)"' "$out"
+ok "the denial is valid JSON" 'valid_json "$out"' "$out"
+out=$(pt p1 "$(bash_call "xcrun simctl boot $(U A)")")
+ok "booting an already-booted simulator is allowed" '[ -z "$out" ]' "$out"
+out=$(pt p1 "$(bash_call 'xcrun simctl boot \"iPhone 16\"')")
+ok "booting an already-booted simulator by name is allowed" '[ -z "$out" ]' "$out"
+out=$(pt p1 "\"tool_name\":\"mcp__XcodeBuildMCP__boot_sim\",\"tool_input\":{\"simulatorUuid\":\"$(U C)\"}")
+ok "MCP simulator boot over the cap is denied" 'echo "$out" | grep -q deny' "$out"
+U A >"$BOOTED"
+out=$(pt p1 "$(bash_call "xcrun simctl boot $(U C)")")
+ok "under the cap: allowed" '[ -z "$out" ]' "$out"
+echo emulator-5554 >"$EMUS"
+out=$(pt p1 "$(bash_call 'emulator -avd Pixel_9 -no-window')")
+ok "second emulator denied (cap 1)" 'echo "$out" | grep -q deny && echo "$out" | grep -q "Pixel_8 (emulator-5554)"' "$out"
+PATH="$HB:$PATH" bash "$S/hooks.sh" limit --emulators 2 >/dev/null
+out=$(pt p1 "$(bash_call 'emulator -avd Pixel_9 -no-window')")
+ok "raised cap allows it" '[ -z "$out" ]' "$out"
+PATH="$HB:$PATH" bash "$S/hooks.sh" limit --emulators 1 >/dev/null
+ok "limit rejects non-numbers" '! bash "$S/hooks.sh" limit --simulators lots >/dev/null 2>&1'
+out=$(pt p1 "$(bash_call 'ls -la')")
+ok "unrelated tool calls produce nothing" '[ -z "$out" ]'
+out=$(MEM="critical 4 9000000" pt p2 "$(bash_call './gradlew assembleDebug')")
+ok "memory pressure: build gets a warning for the agent" 'echo "$out" | grep -q additionalContext && echo "$out" | grep -q "memory pressure is critical"' "$out"
+ok "the warning is valid JSON" 'valid_json "$out"' "$out"
+out=$(MEM="critical 4 9000000" pt p2 "$(bash_call './gradlew test')")
+ok "warned at most once per 10 minutes per session" '[ -z "$out" ]' "$out"
+out=$(MEM="critical 4 9000000" pt p3 "$(bash_call 'xcodebuild test')")
+ok "other sessions still get their warning" 'echo "$out" | grep -q additionalContext' "$out"
+out=$(pt p4 "$(bash_call './gradlew assembleDebug')")
+ok "no pressure: builds pass silently" '[ -z "$out" ]' "$out"
+out=$(echo '{"session_id":"p5"}' | PATH="$HB:$PATH" RD_TEST_MEM="warn 8 0" RD_AGENT_PID="1 none" bash "$S/hooks.sh" session-start)
+ok "session-start tells the agent about memory pressure" 'echo "$out" | grep -q "memory pressure is warn"' "$out"
+ok "preflight flags memory pressure" 'RD_TEST_MEM="critical 4 0" bash "$S/preflight.sh" | grep -q "^WARN  memory-pressure"'
+if ! is_windows_host; then
+  (exec -a qemu-system-fake sleep 30) &
+  qp=$!
+  sleep 1
+  ok "preflight groups memory by kind (emulators)" 'RD_MEM_GROUP_MIN_KB=1 bash "$S/preflight.sh" | grep -q "^INFO  mem:emulators"'
+  kill "$qp" 2>/dev/null; wait "$qp" 2>/dev/null
+fi
 
 echo "== preflight.sh / disk-guard.sh"
 ok "preflight runs" 'bash "$S/preflight.sh" >/dev/null 2>&1'

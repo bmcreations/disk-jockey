@@ -42,6 +42,8 @@ Checks free space, load average, swap, booted simulators, emulators, idle Gradle
 - `docker-reclaimable`, `podman-reclaimable`: what the engine itself says it can free. Container storage is invisible to `du`.
 - `timemachine-snapshots`: `sudo tmutil deletelocalsnapshots /` (backups on the external drive are unaffected).
 
+- `memory-pressure` WARN and the `mem:*` INFO rows: which group holds the RAM (simulators, emulators, Claude sessions, the Claude app, Gradle/Kotlin daemons). On a machine running several agent sessions, this is usually the real problem, not disk. Offer the session hooks (step 7).
+
 Ask before stopping simulators, emulators or daemons. An agent may be mid-test.
 
 ### 2. Measure
@@ -104,12 +106,14 @@ Compare free space before and after. If much less was freed than expected on mac
 
 ### 7. Prevent (offer once the disk is healthy)
 - **Scheduled cleanup:** `scripts/schedule.sh install --threshold 50G` runs tier 1 daily, only when free space drops below the threshold (launchd on macOS, systemd user timer on Linux, Task Scheduler on Windows).
-- **Session hooks:** `scripts/hooks.sh print` shows a Claude Code `settings.json` snippet. SessionStart records which simulators and emulators are running and warns when free space is low; when the last agent session exits, SessionEnd shuts down what was booted since (nothing while another session runs). Show the user the snippet; don't edit their `settings.json` without consent. Other agents can call `hooks.sh session-start --session ID` and `session-end --session ID`.
+- **Session hooks:** `scripts/hooks.sh print` shows a Claude Code `settings.json` snippet. PreToolUse caps booted devices across all sessions (default 2 simulators, 1 emulator; `hooks.sh limit` changes it) and warns agents before builds under memory pressure. SessionStart records which simulators and emulators are running and warns on low disk or memory pressure; when the last agent session exits, SessionEnd shuts down what was booted since (nothing while another session runs). Show the user the snippet; don't edit their `settings.json` without consent. Other agents can call `hooks.sh session-start --session ID` and `session-end --session ID`.
 - **Worktree hygiene:** add a line to the project's `CLAUDE.md` / `AGENTS.md`: "After a PR from a worktree merges, run `disk-jockey worktrees --merged --apply` from the main checkout."
 - **Per-task cleanup:** without the hooks, at the end of a task shut down simulators the task booted (`xcrun simctl shutdown UDID`), close emulators it started, and stop Gradle daemons when no build runs.
 - **Transcript retention:** agent transcripts (`~/.claude/projects`) grow without limit unless retention is configured. Point the user to their agent's retention setting.
 
 ## Failure modes to tell the user about
+
+- **Device cap denials.** With the hooks installed, a boot over the cap is denied with a list of booted devices. Reuse one of those by UDID. Don't try to get around the cap (other boot commands, killing other sessions' devices); ask the user to raise it or free a device.
 
 - **Swap refills the disk.** Cleanup without fixing memory pressure buys hours, not days.
 - **Snapshots hide freed space.** Deleted files stay on disk until APFS snapshots are thinned or the staged update installs.

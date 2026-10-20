@@ -59,13 +59,26 @@ if ! is_win && [ -n "$load" ] && [ -n "$cores" ]; then
   fi
 fi
 
-# --- Swap (kernel_task's huge 'bytes written' in Activity Monitor is mostly this)
+# --- Memory pressure: the usual reason a multi-session machine crawls
+read -r mlvl mpct mswap < <(mem_state)
+case "$mlvl" in
+  critical | warn)
+    row WARN memory-pressure "$mlvl (${mpct}% free)" "Apps are being squeezed into compressed memory and swap. Close simulators, emulators and agent sessions you aren't using."
+    ;;
+  *) row OK memory-pressure "ok (${mpct}% free)" "" ;;
+esac
 if is_mac; then
-  swap_used=$(sysctl -n vm.swapusage 2>/dev/null | sed -n 's/.*used = \([0-9.]*\)M.*/\1/p')
-  swap_kb=$(awk -v m="${swap_used:-0}" 'BEGIN{printf "%d", m * 1024}')
-else
-  swap_kb=$(awk '/SwapTotal/{t=$2} /SwapFree/{f=$2} END{print t-f}' /proc/meminfo 2>/dev/null)
+  # Compressed memory: RAM spent holding squeezed pages of other apps.
+  pages=$(vm_stat 2>/dev/null | sed -n 's/^Pages occupied by compressor: *\([0-9]*\).*/\1/p')
+  psize=$(sysctl -n hw.pagesize 2>/dev/null)
+  if [ -n "$pages" ] && [ -n "$psize" ]; then
+    ckb=$((pages * psize / 1024))
+    [ "$ckb" -gt $((4 * 1024 * 1024)) ] && row INFO compressed-memory "$(human "$ckb")" "RAM holding compressed pages of other apps. High values mean memory is oversubscribed."
+  fi
 fi
+
+# --- Swap (kernel_task's huge 'bytes written' in Activity Monitor is mostly this)
+swap_kb="${mswap:-0}"
 swap_name=swap
 is_win && swap_name=pagefile-used
 if [ "${swap_kb:-0}" -gt $((8 * 1024 * 1024)) ]; then
@@ -112,6 +125,22 @@ if [ $((gd + kd)) -gt 3 ]; then
 else
   row OK jvm-daemons "gradle $gd, kotlin $kd" ""
 fi
+# --- Who holds the memory, by group (RSS overcounts shared pages: an upper bound)
+min_kb="${RD_MEM_GROUP_MIN_KB:-$((300 * 1024))}"
+while read -r g kb cpu n; do
+  [ "${kb:-0}" -ge "$min_kb" ] || continue
+  case "$g" in
+    simulators) adv="Shut down ones not in use (xcrun simctl shutdown UDID). Quitting Simulator.app keeps them booted without windows." ;;
+    emulators) adv="Close emulators you aren't using. For tests, start them with -no-window -memory 2048." ;;
+    claude-sessions) adv="Each session runs its own builds and devices. Archive idle ones; the device cap hook (disk-jockey hooks) stops duplicates." ;;
+    claude-app) adv="High CPU here usually means several sessions streaming at once. Archive idle sessions; restart the app after long runs." ;;
+    jvm-daemons) adv="Idle daemons hold memory for 3h by default. org.gradle.daemon.idletimeout=900000 in ~/.gradle/gradle.properties makes it 15 min." ;;
+    xcode-builds) adv="Builds running now." ;;
+    *) adv="" ;;
+  esac
+  row INFO "mem:$g" "$(human "$kb"), ${cpu}% cpu" "$n process(es). $adv"
+done < <(mem_groups | sort -k2,2nr)
+
 builds=$(($(count_procs 'xcodebuild') + $(count_procs 'GradleWrapperMain')))
 row INFO active-builds "$builds" "Running builds. Targets they use are skipped by clean.sh; don't hand-delete build dirs now."
 agents=$(($(count_procs '(^|[/\\ "])claude(\.exe)?("| |$)') + $(count_procs '(^|[/\\ "])codex(\.exe)?("| |$)')))

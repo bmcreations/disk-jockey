@@ -28,7 +28,7 @@ Usage: disk-jockey [command] [options]
   sweep          build outputs in idle projects (dry run unless --apply)
   schedule       install|uninstall|status a daily cleanup
   quarantine     opt-in undo: on|off|status|list|restore|purge
-  hooks          agent session hooks (shut down simulators/emulators sessions booted)
+  hooks          agent hooks: device cap, memory-pressure warnings, shut down what sessions booted
   guard [SIZE]   one-line low-disk warning (for agent hooks)
   update         update this install (git pull)
   version        print the version
