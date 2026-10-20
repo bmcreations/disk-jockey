@@ -41,6 +41,12 @@ Device cap (pre-tool)
   is denied once the cap is reached. The agent is told which devices are booted so it can reuse one.
   Booting a device that's already running is always allowed.
 
+With loupe (its server answering, token found)
+  Booted devices are listed as free, claimed by this session, claimed by another session, or hands off,
+  and agents are steered to free ones with the curl to claim it. Booting an already-running simulator
+  that another session claimed gets a warning. Config: loupe=auto|on|off, loupe_url (default
+  https://localhost:18456) in ~/.disk-jockey/config. Nothing is claimed for you.
+
 Memory pressure (pre-tool, session-start)
   Before a build or boot, when macOS (or Linux PSI / free memory) reports pressure, the agent gets a
   note: reuse booted devices, don't start parallel builds. At most once per 10 minutes per session.
@@ -119,6 +125,81 @@ emulator_names() {
   for s in $(adb devices 2>/dev/null | awk '$1 ~ /^emulator-[0-9]+$/ && $2 == "device" {print $1}'); do
     printf '%s (%s)\n' "$(adb -s "$s" emu avd name 2>/dev/null | head -n 1 | tr -d '\r')" "$s"
   done
+}
+
+# ---- loupe (github.com/bmc08gt/loupe): agents claim devices there. When its server answers, the cap
+# steers agents to devices no other session has claimed. Config: loupe=auto|on|off (auto: only when a
+# token is found), loupe_url (default https://localhost:18456). Read-only: nothing here claims anything.
+LOUPE_URL_DEFAULT="https://localhost:18456"
+loupe_token() {
+  local f
+  if [ -n "${LOUPE_TOKEN:-}" ]; then printf '%s' "$LOUPE_TOKEN"; return; fi
+  for f in "$HOME/Library/Caches/loupe/token" "$HOME/.cache/loupe/token"; do
+    [ -r "$f" ] && { tr -d '\r\n' <"$f"; LOUPE_TOKEN_FILE="$f"; return; }
+  done
+}
+loupe_fetch() { # path: prints the body, fails fast (1s) when loupe isn't there
+  local mode url tok
+  mode=$(rd_conf loupe auto)
+  [ "$mode" = off ] && return 1
+  have curl || return 1
+  url=$(rd_conf loupe_url "$LOUPE_URL_DEFAULT")
+  tok=$(loupe_token)
+  [ -n "$tok" ] || [ "$mode" = on ] || return 1
+  # -k: the server's certificate names its Tailscale host, not localhost.
+  if [ -n "$tok" ]; then
+    curl -sfk --max-time 1 -H "Authorization: Bearer $tok" "$url$1" 2>/dev/null
+  else
+    curl -sfk --max-time 1 "$url$1" 2>/dev/null
+  fi
+}
+# Loads LOUPE_MAP: "T <id> <serial|-> <handsOff 0|1>" per target and "C <target> <agent|-> <session|->" per
+# claim. Returns 1 when loupe isn't reachable. Flat string fields only, so no JSON parser is needed:
+# rows are split where each object starts ("id" and "target" are the first fields of their structs).
+loupe_load() {
+  local claims targets
+  LOUPE_MAP=""
+  claims=$(loupe_fetch /api/claims) || return 1
+  targets=$(loupe_fetch /api/targets) || targets=""
+  LOUPE_MAP=$(
+    printf '%s' "$targets" | tr -d '\n' | awk '{ gsub(/\{"id":"/, "\n{\"id\":\""); print }' | awk '
+      /^\{"id":"/ { id = $0; sub(/^\{"id":"/, "", id); sub(/".*/, "", id)
+        serial = "-"; if (match($0, /"serial":"[^"]*"/)) serial = substr($0, RSTART + 10, RLENGTH - 11)
+        print "T", id, serial, ($0 ~ /"handsOff":true/) ? 1 : 0 }'
+    printf '%s' "$claims" | tr -d '\n' | awk '{ gsub(/\{"target":"/, "\n{\"target\":\""); print }' | awk '
+      /^\{"target":"/ { t = $0; sub(/^\{"target":"/, "", t); sub(/".*/, "", t)
+        a = "-"; if (match($0, /"agent":"[^"]*"/)) a = substr($0, RSTART + 9, RLENGTH - 10)
+        ss = "-"; if (match($0, /"session":"[^"]*"/)) ss = substr($0, RSTART + 11, RLENGTH - 12)
+        gsub(/ /, "_", a); gsub(/ /, "_", ss); print "C", t, a, ss }'
+  )
+}
+# Status of one device in loupe: free, mine, handsoff or claimed:<agent>. ID is sim:<udid> or an adb serial.
+loupe_status() {
+  printf '%s\n' "$LOUPE_MAP" | awk -v want="$1" -v me="${sid:-}" '
+    $1 == "T" && ($2 == want || $3 == want) { ids[$2] = 1; if ($4 == 1) ho = 1 }
+    $1 == "C" { c[$2] = $3; cs[$2] = $4 }
+    END {
+      ids[want] = 1
+      if (ho) { print "handsoff"; exit }
+      for (i in ids) if (i in c) { if (me != "" && cs[i] == me) print "mine"; else print "claimed:" c[i]; exit }
+      print "free"
+    }'
+}
+status_words() { # status
+  case "$1" in
+    free) echo "free" ;;
+    mine) echo "claimed by this session" ;;
+    handsoff) echo "hands off (the user reserved it)" ;;
+    claimed:*) echo "claimed by ${1#claimed:} in another session" ;;
+  esac
+}
+claim_hint() { # loupe-target-id
+  local url tf
+  url=$(rd_conf loupe_url "$LOUPE_URL_DEFAULT")
+  tf="${LOUPE_TOKEN_FILE:-}"
+  if [ -n "$tf" ]; then tf="\$(cat $(tilde "$tf"))"; else tf='$LOUPE_TOKEN'; fi
+  printf 'Claim the one you use in loupe so other sessions skip it: curl -sk -X POST -H "Authorization: Bearer %s" -H "X-Loupe-Agent: claude" -H "X-Loupe-Session: %s" "%s/api/claims?target=%s"' \
+    "$tf" "${sid:-SESSION}" "$url" "$1"
 }
 
 # Memory pressure, cached for 30 s so a burst of tool calls doesn't re-measure each time.
@@ -252,16 +333,64 @@ EOF
         target=$(printf '%s' "$flat" | sed -n 's/.*"simulatorName"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
         [ -n "$target" ] || target=$(printf '%s' "$flat" | sed -nE 's/.*simctl[[:space:]]+boot[[:space:]]+(\\"|")?([^"\\&;|]+).*/\2/p' | sed 's/[[:space:]]*$//')
       fi
-      already=0
+      already=0 hit=""
       if [ -n "$target" ]; then
-        printf '%s\n' "$booted" | grep -qiF -- "($target)" && already=1
-        printf '%s\n' "$booted" | grep -qF -- "$target (" && already=1
+        hit=$(printf '%s\n' "$booted" | grep -iF -- "($target)" | head -n 1)
+        [ -n "$hit" ] || hit=$(printf '%s\n' "$booted" | grep -F -- "$target (" | head -n 1)
+        [ -n "$hit" ] && already=1
+      fi
+      have_loupe=0
+      loupe_load && have_loupe=1
+      if [ "$already" = 1 ] && [ "$have_loupe" = 1 ]; then
+        # Already running, so booting is a no-op, but another session may be using it.
+        u=$(printf '%s' "$hit" | sed -n 's/.*(\([0-9A-Fa-f-]\{36\}\))$/\1/p')
+        st=$(loupe_status "sim:$u")
+        case "$st" in
+          handsoff | claimed:*)
+            free=$(printf '%s\n' "$booted" | while IFS= read -r b; do
+              bu=$(printf '%s' "$b" | sed -n 's/.*(\([0-9A-Fa-f-]\{36\}\))$/\1/p')
+              [ "$(loupe_status "sim:$bu")" = free ] && echo "  - $b"
+            done)
+            context="disk-jockey: $hit is $(status_words "$st") (loupe). Driving it will collide with that session.${free:+ Free booted simulators:
+$free}"
+            ;;
+        esac
       fi
       if [ "$already" = 0 ] && [ "$max" != 0 ] && [ "$n" -ge "$max" ]; then
-        list=$(printf '%s\n' "$booted" | sed 's/^/  - /')
-        deny="disk-jockey: $n simulators are already booted across your agent sessions (cap $max). Reuse one of these by its UDID instead of booting another:
+        if [ "$have_loupe" = 1 ]; then
+          free="" busy=""
+          while IFS= read -r b; do
+            [ -n "$b" ] || continue
+            bu=$(printf '%s' "$b" | sed -n 's/.*(\([0-9A-Fa-f-]\{36\}\))$/\1/p')
+            st=$(loupe_status "sim:$bu")
+            case "$st" in
+              free | mine) free="$free  - $b: $(status_words "$st")
+" ;;
+              *) busy="$busy  - $b: $(status_words "$st")
+" ;;
+            esac
+          done <<EOF
+$booted
+EOF
+          busy_txt=""
+          [ -n "$busy" ] && busy_txt="In use by other sessions, do not drive these:
+$busy"
+          if [ -n "$free" ]; then
+            pick=$(printf '%s' "$free" | head -n 1 | sed -n 's/.*(\([0-9A-Fa-f-]\{36\}\)).*/\1/p')
+            deny="disk-jockey: $n simulators are already booted across your agent sessions (cap $max). Reuse one nobody has claimed, by its UDID, instead of booting another:
+$free$busy_txt$(claim_hint "sim:$pick")
+If you really need a different device, ask the user to shut one down or raise the cap (disk-jockey hooks limit --simulators N)."
+          else
+            deny="disk-jockey: $n simulators are already booted (cap $max), and loupe shows every one in use:
+$busy
+Don't drive those. Ask the user to free one (xcrun simctl shutdown UDID) or raise the cap (disk-jockey hooks limit --simulators N)."
+          fi
+        else
+          list=$(printf '%s\n' "$booted" | sed 's/^/  - /')
+          deny="disk-jockey: $n simulators are already booted across your agent sessions (cap $max). Reuse one of these by its UDID instead of booting another:
 $list
 If you really need a different device, ask the user to shut one down (xcrun simctl shutdown UDID) or raise the cap (disk-jockey hooks limit --simulators N)."
+        fi
       fi
     elif [ "$kind" = emu ]; then
       max=$(rd_conf max_emulators 1)
@@ -270,13 +399,21 @@ If you really need a different device, ask the user to shut one down (xcrun simc
       already=0
       [ -n "$avd" ] && [ "$(count_procs "(-avd |@)$avd( |\$)")" -gt 0 ] && already=1
       if [ "$already" = 0 ] && [ "$max" != 0 ] && [ "$n" -ge "$max" ]; then
-        list=$(emulator_names | sed 's/^/  - /')
+        if loupe_load; then
+          list=$(emulator_names | while IFS= read -r e; do
+            ser=$(printf '%s' "$e" | sed -n 's/.*(\(emulator-[0-9]*\))$/\1/p')
+            echo "  - $e: $(status_words "$(loupe_status "$ser")")"
+          done)
+        else
+          list=$(emulator_names | sed 's/^/  - /')
+        fi
         deny="disk-jockey: $n Android emulator(s) already running across your agent sessions (cap $max). Use the running one (adb -s SERIAL) instead of starting another:
 ${list:-  - see adb devices}
 If you really need a different one, ask the user to close one or raise the cap (disk-jockey hooks limit --emulators N)."
       fi
     fi
 
+    context="${context:-}"
     note=""
     read -r plvl ppct pswap < <(pressure)
     if [ "${plvl:-ok}" != ok ]; then
@@ -293,8 +430,12 @@ If you really need a different one, ask the user to close one or raise the cap (
 $note"
       log_line "pre-tool ${sid:-?}: denied $kind boot ($tool)"
       printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$(json_str "$deny")"
-    elif [ -n "$note" ]; then
-      printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"%s"}}\n' "$(json_str "$note")"
+    elif [ -n "$note$context" ]; then
+      both="$context"
+      [ -n "$note" ] && both="${both:+$both
+
+}$note"
+      printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"%s"}}\n' "$(json_str "$both")"
     fi
     exit 0
     ;;

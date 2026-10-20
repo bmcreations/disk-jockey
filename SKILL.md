@@ -113,7 +113,7 @@ Compare free space before and after. If much less was freed than expected on mac
 
 ## Failure modes to tell the user about
 
-- **Device cap denials.** With the hooks installed, a boot over the cap is denied with a list of booted devices. Reuse one of those by UDID. Don't try to get around the cap (other boot commands, killing other sessions' devices); ask the user to raise it or free a device.
+- **Device cap denials.** With the hooks installed, a boot over the cap is denied with a list of booted devices. Reuse one of those by UDID. When loupe is running, the list marks each device free, claimed or hands off: pick a free one, claim it with the curl the message gives (it carries your session id), and never drive one another session claimed. Don't try to get around the cap (other boot commands, killing other sessions' devices); ask the user to raise it or free a device.
 
 - **Swap refills the disk.** Cleanup without fixing memory pressure buys hours, not days.
 - **Snapshots hide freed space.** Deleted files stay on disk until APFS snapshots are thinned or the staged update installs.

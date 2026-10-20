@@ -155,6 +155,7 @@ cd <main checkout> && disk-jockey worktrees --merged --apply
 **Keep parallel sessions from drowning the machine.** Seven sessions each booting their own simulator, emulator and Gradle build is how a 36 GB Mac ends up in swap. `disk-jockey hooks` prints a Claude Code `settings.json` snippet with three hooks:
 
 - **Device cap (PreToolUse).** Once 2 simulators or 1 emulator are booted across all sessions, booting another is denied and the agent is told which devices to reuse by UDID. Booting one that's already running is always allowed. Change the cap with `disk-jockey hooks limit --simulators 3`.
+- **[loupe](https://github.com/bmc08gt/loupe) claims, when it's running.** If a loupe server answers (its token in `~/Library/Caches/loupe/token`), the cap lists each booted device as free, claimed by another session, or hands off, sends agents to a free one with the command to claim it, and warns an agent about to drive a simulator another session claimed. Set `loupe_url` in `~/.disk-jockey/config` if it isn't on `https://localhost:18456`.
 - **Memory pressure warnings.** When macOS (or Linux PSI) reports pressure, agents get a note at session start and before builds: reuse booted devices, don't start parallel builds, stop idle daemons.
 - **Cleanup at the end (SessionEnd).** When the last session exits, everything booted since the first one started is shut down (simulators keep their data). While any other session is running, nothing is touched. Session start also warns on low disk.
 

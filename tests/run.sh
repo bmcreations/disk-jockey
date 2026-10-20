@@ -331,6 +331,39 @@ out=$(pt p4 "$(bash_call './gradlew assembleDebug')")
 ok "no pressure: builds pass silently" '[ -z "$out" ]' "$out"
 out=$(echo '{"session_id":"p5"}' | PATH="$HB:$PATH" RD_TEST_MEM="warn 8 0" RD_AGENT_PID="1 none" bash "$S/hooks.sh" session-start)
 ok "session-start tells the agent about memory pressure" 'echo "$out" | grep -q "memory pressure is warn"' "$out"
+# loupe: a fake server behind a fake curl. B is claimed by another session, A is free.
+LC="$T/loupe"; mkdir -p "$LC"
+cat >"$HB/curl" <<EOF
+#!/bin/sh
+for a in "\$@"; do u="\$a"; done
+case "\$u" in
+  */api/claims) cat "$LC/claims.json" ;;
+  */api/targets) cat "$LC/targets.json" ;;
+  *) exit 7 ;;
+esac
+EOF
+chmod +x "$HB/curl"
+printf '[{"target":"sim:%s","agent":"claude","session":"other-session","since":"2026-10-20T09:00:00Z","idleMs":1200}]' "$(U B)" >"$LC/claims.json"
+printf '[{"id":"sim:%s","kind":"simulator","label":"iPhone 16","available":true},{"id":"sim:%s","kind":"simulator","label":"iPhone 16","available":true,"claim":{"target":"sim:%s","agent":"claude","session":"other-session","since":"2026-10-20T09:00:00Z","idleMs":1200}},{"id":"avd:Pixel_8","kind":"emulator","serial":"emulator-5554","available":true,"handsOff":true}]' "$(U A)" "$(U B)" "$(U B)" >"$LC/targets.json"
+lpt() { LOUPE_TOKEN=x pt "$@"; }
+printf '%s\n%s\n' "$(U A)" "$(U B)" >"$BOOTED"
+out=$(lpt p6 "$(bash_call "xcrun simctl boot $(U C)")")
+ok "loupe: denial steers to the unclaimed simulator" 'echo "$out" | grep -q "$(U A))*: free" && echo "$out" | grep -q "$(U B))*: claimed by claude in another session"' "$out"
+ok "loupe: denial says how to claim it, with this session's id" 'echo "$out" | grep -q "X-Loupe-Session: p6" && echo "$out" | grep -q "target=sim:$(U A)"' "$out"
+ok "loupe: denial is still valid JSON" 'valid_json "$out"' "$out"
+out=$(lpt p6 "$(bash_call "xcrun simctl boot $(U B)")")
+ok "loupe: using a booted simulator another session claimed gets a warning" 'echo "$out" | grep -q additionalContext && echo "$out" | grep -q "claimed by claude in another session" && ! echo "$out" | grep -q deny' "$out"
+out=$(lpt other-session "$(bash_call "xcrun simctl boot $(U B)")")
+ok "loupe: the claiming session itself isn't warned" '[ -z "$out" ]' "$out"
+printf '[{"target":"sim:%s","agent":"claude","session":"s1"},{"target":"sim:%s","agent":"codex","session":"s2"}]' "$(U A)" "$(U B)" >"$LC/claims.json"
+out=$(lpt p6 "$(bash_call "xcrun simctl boot $(U C)")")
+ok "loupe: every booted simulator claimed: denial says to ask the user" 'echo "$out" | grep -q "every one in use" && echo "$out" | grep -q "codex"' "$out"
+echo emulator-5554 >"$EMUS"
+out=$(lpt p6 "$(bash_call 'emulator -avd Pixel_9')")
+ok "loupe: emulators show hands off by serial" 'echo "$out" | grep -q "emulator-5554): hands off"' "$out"
+out=$(PATH="$HB:$PATH" RD_TEST_MEM="ok 60 0" bash -c 'printf "{\"session_id\":\"p7\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"xcrun simctl boot %s\"}}" "$1" | bash "$2/hooks.sh" pre-tool' _ "$(U C)" "$S")
+ok "no loupe token: plain denial, loupe not consulted" 'echo "$out" | grep -q deny && ! echo "$out" | grep -q "claimed by"' "$out"
+: >"$EMUS"; rm -f "$HB/curl"
 ok "preflight flags memory pressure" 'RD_TEST_MEM="critical 4 0" bash "$S/preflight.sh" | grep -q "^WARN  memory-pressure"'
 if ! is_windows_host; then
   (exec -a qemu-system-fake sleep 30) &
