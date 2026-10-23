@@ -94,6 +94,13 @@ scripts/clean.sh --apply --tier 2 --only gradle-modules,xcode-device-support
 ```
 Targets running tools are skipped automatically (busy check). Tool-managed caches are cleaned with the tool's own command (`npm cache clean`, `pnpm store prune`, `brew cleanup`, `xcrun simctl delete unavailable`, `docker builder prune`). Tier 2 items: ask per target, stating the cost (e.g. "next build re-downloads ~4G of dependencies").
 
+### Orphaned build folders (always safe)
+```bash
+scripts/clean.sh --orphans            # dry run
+scripts/clean.sh --orphans --apply
+```
+Xcode DerivedData and XcodeBuildMCP workspaces whose recorded project no longer exists (deleted worktrees). Safe to run without asking once the user has asked for cleanup: nothing whose project still exists, or that records no project, is touched. The session hooks and the daily schedule run it automatically.
+
 ### 5. Build outputs in idle projects
 ```bash
 scripts/sweep.sh [--days 14] [root ...]

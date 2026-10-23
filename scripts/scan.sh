@@ -10,7 +10,9 @@ case "${1:-}" in
 esac
 
 tmp=$(mktemp)
-trap 'rm -f "$tmp"' EXIT
+RD_SEEN=$(mktemp)
+export RD_SEEN
+trap 'rm -f "$tmp" "$RD_SEEN"' EXIT
 log "Scanning targets (du over large caches can take a minute)..."
 
 while IFS='|' read -r tier id os paths action busy note; do

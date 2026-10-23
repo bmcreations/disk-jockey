@@ -213,6 +213,45 @@ ok "its branch survives the purge" 'git -C "$R/app" rev-parse -q --verify agent/
 bash "$S/quarantine.sh" off >/dev/null
 ok "quarantine off" 'bash "$S/quarantine.sh" status | grep -q "Quarantine: off"'
 
+echo "== orphaned build folders (project gone)"
+DD="$HOME/Library/Developer/Xcode/DerivedData"; MW="$HOME/Library/Developer/XcodeBuildMCP/workspaces"
+plist() { mkdir -p "$1"; printf '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0">\n<dict>\n\t<key>LastAccessedDate</key>\n\t<date>2026-10-01T10:00:00Z</date>\n\t<key>WorkspacePath</key>\n\t<string>%s</string>\n</dict>\n</plist>\n' "$2" >"$1/info.plist"; }
+sha() { bash -c '. "$1/lib.sh"; sha12 "$2"' _ "$S" "$1"; }
+mkdir -p "$R/app/App.xcodeproj"
+plist "$DD/App-live" "$R/app/App.xcodeproj"; blob "$DD/App-live/Build"
+plist "$DD/App-gone" "$HOME/code/gone-wt/App.xcodeproj"; blob "$DD/App-gone/Build"
+plist "$DD/Amp-gone" "$HOME/code/a&b/App.xcodeproj"; blob "$DD/Amp-gone/Build"
+blob "$DD/NoInfo-x/Build"; blob "$DD/ModuleCache.noindex"
+plist "$DD/Vol-y" "/Volumes/dj-not-mounted-$$/x/App.xcodeproj"; blob "$DD/Vol-y/Build"
+mroot="$R/app/.claude/worktrees/mlive"; mkdir -p "$mroot"
+MLIVE="$MW/mlive-$(sha "$mroot")"; plist "$MLIVE/DerivedData/Renamed-aaa" "$mroot/Renamed.xcodeproj"; blob "$MLIVE/DerivedData/Renamed-aaa/Build"
+MGONE="$MW/wtgone-$(sha "$HOME/code/wtgone")"; mkdir -p "$MGONE/state/daemon"; printf '{"pid":1,"workspaceRoot":"%s","version":"2.7"}' "$HOME/code/wtgone" >"$MGONE/state/daemon/daemon.json"; blob "$MGONE/test-products/x.xctestproducts"
+blob "$MW/empty-123456789abc/logs"
+find "$DD" "$MW" -exec touch -t "$(ago 10)" {} + 2>/dev/null
+MFRESH="$MW/fresh-$(sha "$HOME/code/fresh")"; plist "$MFRESH/DerivedData/F-1" "$HOME/code/fresh/F.xcodeproj"
+dj_mac() { RD_FORCE_OS=Darwin RD_IGNORE_CTIME=1 bash "$S/clean.sh" "$@" 2>&1; }
+out=$(dj_mac --orphans)
+ok "orphans: deleted worktree's DerivedData listed" 'echo "$out" | grep -q "DerivedData/App-gone"' "$out"
+ok "orphans: XcodeBuildMCP workspace of a deleted worktree listed" 'echo "$out" | grep -q "wtgone-"' "$out"
+ok "orphans: dry run deletes nothing" '[ -d "$DD/App-gone" ] && [ -d "$MGONE" ]'
+ok "orphans: live project's DerivedData not listed" '! echo "$out" | grep -q "App-live"' "$out"
+dj_mac --orphans --apply >/dev/null
+ok "orphans: removed on --apply" '[ ! -e "$DD/App-gone" ] && [ ! -e "$MGONE" ] && [ ! -e "$DD/Amp-gone" ]'
+ok "orphans: live project's DerivedData kept" '[ -d "$DD/App-live" ]'
+ok "orphans: folders that record nothing kept" '[ -d "$DD/NoInfo-x" ] && [ -d "$DD/ModuleCache.noindex" ] && [ -d "$MW/empty-123456789abc" ]'
+ok "orphans: project on an unmounted volume kept" '[ -d "$DD/Vol-y" ]'
+ok "orphans: workspace whose root still exists kept (project renamed)" '[ -d "$MLIVE" ]'
+ok "orphans: folder written in the last 2 minutes kept" '[ -d "$MFRESH" ]'
+plist "$DD/Dup-gone" "$HOME/code/dup-wt/App.xcodeproj"; blob "$DD/Dup-gone/Build"; find "$DD/Dup-gone" -exec touch -t "$(ago 30)" {} +
+out=$(dj_mac --only xcode-deriveddata-orphans,xcode-deriveddata)
+ok "an orphan that is also stale is counted once" '[ "$(echo "$out" | grep -c "Dup-gone")" = 1 ]' "$out"
+out=$(RD_FORCE_OS=Darwin bash "$S/scan.sh" --tsv 2>/dev/null)
+ok "scan reports orphans as their own row" 'echo "$out" | grep -q "xcode-deriveddata-orphans"' "$out"
+rm -f "$HOME/.disk-jockey/orphans.last"
+echo '{"session_id":"orph1","reason":"other"}' | RD_FORCE_OS=Darwin RD_HOOK_SYNC=1 RD_AGENT_PID="1 none" bash "$S/hooks.sh" session-end
+ok "session end sweeps orphans" '[ ! -e "$DD/Dup-gone" ] && [ -d "$DD/App-live" ]' "$(tail -5 "$HOME/.disk-jockey/sessions/log" 2>&1)"
+rm -rf "$HOME/Library/Developer" "$HOME/.disk-jockey/orphans.last"
+
 echo "== worktrees.sh --merged (agent-triggered)"
 (cd "$R/app" && g worktree add $W/m1 -b agent/m1 && cd $W/m1 && echo m >m.txt && g add m.txt && g commit -m m1 && g push origin agent/m1)
 (cd "$R/app" && g merge --no-ff agent/m1 -m "merge m1" && g push origin main)

@@ -9,6 +9,7 @@ Usage: clean.sh [options]
   --apply                actually delete (default is a dry run)
   --only id1,id2         only these target ids
   --skip id1,id2         skip these target ids
+  --orphans              only build folders whose project no longer exists (always safe; for hooks and schedules)
   --if-free-below SIZE   exit without doing anything unless free space < SIZE (e.g. 50G)
   --quarantine           move to quarantine instead of deleting (undo with: disk-jockey quarantine restore)
   --no-quarantine        delete directly even when quarantine is on
@@ -16,13 +17,14 @@ Usage: clean.sh [options]
 EOF
 }
 
-max_tier=1 apply=0 only="" skip="" threshold="" quiet=0
+max_tier=1 apply=0 only="" skip="" threshold="" quiet=0 orphans=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --tier) max_tier="$2"; shift ;;
     --apply) apply=1 ;;
     --only) only=",$2,"; shift ;;
     --skip) skip=",$2,"; shift ;;
+    --orphans) orphans=1 ;;
     --if-free-below) threshold="$2"; shift ;;
     --quarantine) export RD_QUARANTINE=1 ;;
     --no-quarantine) export RD_QUARANTINE=0 ;;
@@ -61,11 +63,16 @@ if [ "$apply" = 1 ]; then
 fi
 
 planned=0 failures=0 kept=0 skipped_cmd=0
+# One path, one claim: an orphaned DerivedData folder is also a stale one.
+RD_SEEN=$(mktemp "$RD_TMP/seen.XXXXXX")
+export RD_SEEN
+trap 'rm -f "$RD_SEEN"' EXIT
 while IFS='|' read -r tier id os paths action busy note; do
   [ "$tier" -le "$max_tier" ] || continue
   [ -n "$only" ] && case "$only" in *",$id,"*) ;; *) continue ;; esac
   [ -n "$skip" ] && case "$skip" in *",$id,"*) continue ;; esac
   [ "$action" = report ] && continue
+  [ "$orphans" = 1 ] && [ "$action" != orphan ] && continue
 
   case "$action" in
     cmd:*)

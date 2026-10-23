@@ -256,6 +256,21 @@ prune_dead() {
   done
 }
 
+# Build folders whose project is gone (deleted worktrees) are safe to delete whenever: no idle-time
+# guess, no other session can need them. Runs in the background, at most every 10 minutes.
+sweep_orphans() {
+  local stamp="$RD_STATE/orphans.last"
+  [ "$(rd_conf orphan_sweep on)" = off ] && return 0
+  mkdir -p "$dir" 2>/dev/null || return 0
+  [ -n "$(find "$stamp" -mmin -10 2>/dev/null)" ] && return 0
+  touch "$stamp"
+  if [ "${RD_HOOK_SYNC:-}" = 1 ]; then
+    bash "$RD_DIR/clean.sh" --orphans --apply -q >>"$dir/log" 2>&1
+  else
+    nohup bash "$RD_DIR/clean.sh" --orphans --apply -q >>"$dir/log" 2>&1 &
+  fi
+}
+
 active_count() { find "$dir/active" -type f 2>/dev/null | wc -l | tr -d ' '; }
 
 case "$cmd" in
@@ -286,6 +301,8 @@ PreToolUse caps booted devices across all sessions ($(rd_conf max_simulators 2) 
   "disk-jockey hooks limit") and warns agents before builds when memory is tight. Unrelated tool calls
   exit immediately; if the hook ever times out, the tool call goes ahead.
 SessionEnd shuts down simulators and emulators booted while agents worked, once the last session exits.
+Both clear build folders whose project is gone (deleted worktrees' DerivedData and XcodeBuildMCP
+  workspaces) in the background, at most every 10 minutes. Off with orphan_sweep=off in ~/.disk-jockey/config.
 Other agents: call "$run session-start" and "$run session-end" with --session ID from their own hooks.
 EOF
     ;;
@@ -458,6 +475,7 @@ $note"
     fi
     agent_pid >"$dir/active/$sid"
     log_line "start $sid${reason:+ ($reason)}"
+    sweep_orphans
     [ -n "$guard" ] && bash "$RD_DIR/disk-guard.sh" "$guard"
     # Plain stdout from SessionStart becomes context the agent sees.
     read -r plvl ppct pswap < <(pressure)
@@ -471,6 +489,7 @@ $note"
 
   session-end)
     [ -n "$sid" ] || { log "session-end: no session id"; exit 0; }
+    sweep_orphans
     [ -d "$dir" ] || exit 0
     rm -f "$dir/active/$sid" "$dir/warned-$sid"
     case "$reason" in

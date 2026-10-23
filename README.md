@@ -100,7 +100,7 @@ Then run `~/.agents/skills/disk-jockey/bin/disk-jockey`, or the scripts in `scri
 |---|---|
 | `dj.sh` | Interactive mode for humans: one-key preflight fixes, arrow-key pickers for categories and worktrees, before/after summary |
 | `preflight.sh` | Free space, load, memory pressure, swap, memory by group (simulators, emulators, Claude sessions, the Claude app, Gradle), idle daemons, active builds, APFS snapshots, uptime |
-| `scan.sh` | Sizes 90+ known targets across Xcode, simulators, Android, Gradle, Node, Python, Go, Rust, Flutter, Docker, editors, Electron apps, game engines and version managers |
+| `scan.sh` | Sizes 100+ known targets, including build folders whose project is gone, across Xcode, simulators, Android, Gradle, Node, Python, Go, Rust, Flutter, Docker, editors, Electron apps, game engines and version managers |
 | `worktrees.sh` | Audits every linked worktree, nested ones included. Detects squash-merged PRs with `gh`. `--merged` cleans up right after a merge |
 | `clean.sh` | Tiered cleanup with the tools' own commands where they exist (`simctl`, `brew cleanup`, `pnpm store prune`) |
 | `sweep.sh` | `build/`, `.gradle`, `node_modules`, `target/`, `.build` in projects idle for N days |
@@ -143,6 +143,8 @@ disk-jockey quarantine purge --all   # free the space now
 Or for a single run: `disk-jockey clean --apply --quarantine`. Worktrees are moved with `git worktree move`, so even a REVIEW worktree's uncommitted changes come back on restore. Items older than the retention are purged on the next `--apply`. Tool-run cleanups (`npm cache clean`, `brew cleanup`) can't be undone, so they're skipped while quarantine is on, and anything on a different disk than `~/.disk-jockey` is left in place rather than copied.
 
 ## Keep the floor clear
+
+**Build folders of deleted worktrees go on their own.** Every worktree gets its own Xcode DerivedData and XcodeBuildMCP workspace, and both stay behind after the worktree is deleted (XcodeBuildMCP never sweeps them: [#526](https://github.com/getsentry/xcodebuildmcp/issues/526), 143 GB in that report). Each folder records the project it was built from (`WorkspacePath` in Xcode's `info.plist`, `workspaceRoot` in XcodeBuildMCP's daemon record), so disk-jockey deletes one only when every recorded project is gone: no idle-time guessing. A folder that records nothing, a project on an unmounted drive, or a workspace whose root still exists is kept. It runs from the session hooks (in the background, at most every 10 minutes) and on every scheduled run regardless of free space, or by hand with `disk-jockey clean --orphans --apply`.
 
 **Clean up worktrees the moment a PR merges.** The agent that opened the PR knows when it merged. Tell it, or put it in your `CLAUDE.md` / `AGENTS.md`:
 

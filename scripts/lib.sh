@@ -508,7 +508,68 @@ each_target() {
     done
 }
 
-# Paths a target would delete (stale:N filters to stale matches only).
+# ---- Orphans: build output that records which project it was built from, and whose project is gone.
+# Agents create a worktree per task and delete it afterwards; Xcode's DerivedData and XcodeBuildMCP's
+# per-workspace folders for it stay forever. Deciding needs no idle-time guess: the source path is recorded.
+
+# One key from a plist (XML or binary). plutil on macOS; a sed fallback reads XML elsewhere (tests).
+plist_get() { # file key
+  if have plutil; then
+    plutil -extract "$2" raw -o - "$1" 2>/dev/null
+  else
+    tr -d '\n' <"$1" | sed -n "s:.*<key>$2</key>[[:space:]]*<string>\([^<]*\)</string>.*:\1:p" |
+      sed 's/&lt;/</g; s/&gt;/>/g; s/&quot;/"/g; s/&apos;/'"'"'/g; s/&amp;/\&/g'
+  fi
+}
+# First 12 hex characters of sha256(text), XcodeBuildMCP's workspace hash.
+sha12() {
+  if have shasum; then printf '%s' "$1" | shasum -a 256 | cut -c1-12
+  elif have sha256sum; then printf '%s' "$1" | sha256sum | cut -c1-12
+  fi
+}
+# Source paths a build folder records: Xcode's info.plist WorkspacePath (the folder itself, or each
+# project folder inside an XcodeBuildMCP workspace's DerivedData) and XcodeBuildMCP's daemon workspaceRoot.
+orphan_refs() {
+  local d="$1" f
+  for f in "$d/info.plist" "$d"/DerivedData/info.plist "$d"/DerivedData/*/info.plist; do
+    [ -f "$f" ] && plist_get "$f" WorkspacePath && echo
+  done
+  f="$d/state/daemon/daemon.json"
+  [ -f "$f" ] && { tr -d '\n' <"$f" | sed -n 's/.*"workspaceRoot"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'; echo; }
+  return 0
+}
+# 0 only when the folder records at least one source path and every one of them is gone.
+# Unknown (nothing recorded), a path on an unmounted volume, or a folder written in the last 2 minutes
+# all count as live.
+is_orphan() {
+  local d="$1" r a key hash any=0
+  [ -d "$d" ] && [ ! -L "$d" ] || return 1
+  [ -n "$(find "$d" -maxdepth 1 -mmin -2 -print -quit 2>/dev/null)" ] && return 1
+  key=$(basename "$d")
+  hash=""
+  case "$key" in *-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) hash="${key##*-}" ;; esac
+  while IFS= read -r r || [ -n "$r" ]; do
+    [ -n "$r" ] || continue
+    case "$r" in /*) ;; *) continue ;; esac
+    any=1
+    [ -e "$r" ] && return 1
+    case "$r" in /Volumes/*/*) a="${r#/Volumes/}"; [ -d "/Volumes/${a%%/*}" ] || return 1 ;; esac
+    # XcodeBuildMCP keys a workspace by sha256 of its root: a root that still exists (the project
+    # inside was renamed or moved) keeps the workspace.
+    if [ -n "$hash" ]; then
+      a="$r"
+      while [ "$a" != / ] && [ -n "$a" ]; do
+        a=$(dirname "$a")
+        [ "$(sha12 "$a")" = "$hash" ] && [ -d "$a" ] && return 1
+      done
+    fi
+  done < <(orphan_refs "$d")
+  [ "$any" = 1 ]
+}
+
+# Paths a target would delete (stale:N keeps stale matches, orphan keeps orphans).
+# With RD_SEEN set to a file, a path already claimed by an earlier target in this run is skipped,
+# so overlapping rows (orphaned DerivedData and stale DerivedData) never count or act twice.
 target_matches() {
   local paths="$1" action="$2" m days
   case "$action" in
@@ -518,8 +579,21 @@ target_matches() {
         is_stale "$m" "$days" && printf '%s\n' "$m"
       done
       ;;
+    orphan)
+      expand_paths "$paths" | while IFS= read -r m; do
+        is_orphan "$m" && printf '%s\n' "$m"
+      done
+      ;;
     *) expand_paths "$paths" ;;
-  esac
+  esac | if [ -n "${RD_SEEN:-}" ]; then
+    while IFS= read -r m; do
+      grep -qxF -- "$m" "$RD_SEEN" 2>/dev/null && continue
+      printf '%s\n' "$m" >>"$RD_SEEN"
+      printf '%s\n' "$m"
+    done
+  else
+    cat
+  fi
 }
 
 # Default project roots (override with RD_ROOTS="dir1:dir2").
@@ -599,7 +673,7 @@ win_dir_free() {
 # Category used by the interactive mode, derived from the target id.
 category_of() {
   case "$1" in
-    xcode-* | xctest-* | sim-* | simulators | coresim-* | swift* | cocoapods-*) echo "Xcode & Simulators" ;;
+    xcode-* | xcodebuildmcp-* | xctest-* | sim-* | simulators | coresim-* | swift* | cocoapods-*) echo "Xcode & Simulators" ;;
     android-studio-* | jetbrains-* | vscode-* | cursor-*) echo "IDEs" ;;
     android-* | avd-* | gradle-* | kotlin-* | konan-* | maven-*) echo "Android & JVM" ;;
     npm-* | pnpm-* | yarn-* | bun-* | deno-*) echo "JavaScript" ;;
