@@ -442,6 +442,54 @@ json_str() {
   printf '%s' "$1" | awk 'BEGIN{ORS=""} { gsub(/\\/, "\\\\"); gsub(/"/, "\\\""); gsub(/\t/, "\\t"); if (NR > 1) printf "\\n"; print }'
 }
 
+# ---- Device ownership: which agent process holds which simulator/emulator (the MCP server's acquire).
+# A record is $RD_STATE/devices/<sim:UDID|emu:SERIAL> holding "PID NAME" of the owning agent process.
+# RD_AGENT_PID="PID NAME" overrides the lookup (tests, other agents).
+
+# The agent behind this process: the nearest ancestor that isn't a shell.
+proc_owner() {
+  if [ -n "${RD_AGENT_PID:-}" ]; then echo "$RD_AGENT_PID"; return; fi
+  is_win && return 0
+  local p=$PPID c i=0
+  while [ -n "$p" ] && [ "$p" -gt 1 ] 2>/dev/null && [ "$i" -lt 4 ]; do
+    c=$(ps -o comm= -p "$p" 2>/dev/null | sed 's#.*/##; s/^-//')
+    case "$c" in "" | sh | bash | zsh | dash | fish | env) ;; *) echo "$p $c"; return ;; esac
+    p=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')
+    i=$((i + 1))
+  done
+}
+# 0 while "PID NAME" is still that process. Unknown (no pid, Windows) counts as alive: never reaped.
+owner_alive() {
+  local pid="${1%% *}" name="${1#* }"
+  [ -n "$pid" ] && [ "$pid" != "$1" ] || return 0
+  is_win && return 0
+  [ "$(ps -o comm= -p "$pid" 2>/dev/null | sed 's#.*/##; s/^-//')" = "$name" ]
+}
+dev_dir() { echo "$RD_STATE/devices"; }
+dev_owner() { cat "$(dev_dir)/$1" 2>/dev/null; }
+dev_claim() { mkdir -p "$(dev_dir)" && proc_owner >"$(dev_dir)/$1"; }
+dev_release() { rm -f "$(dev_dir)/$1"; }
+dev_shutdown() {
+  case "$1" in
+    sim:*) have xcrun && xcrun simctl shutdown "${1#sim:}" >/dev/null 2>&1 ;;
+    emu:*) have adb && adb -s "${1#emu:}" emu kill >/dev/null 2>&1 ;;
+  esac
+}
+# Shut down devices whose owner is gone, or is the given "PID NAME" (a session ending). Prints what it did.
+reap_devices() {
+  local f id o
+  for f in "$(dev_dir)"/*; do
+    [ -f "$f" ] || continue
+    id=$(basename "$f")
+    o=$(cat "$f" 2>/dev/null)
+    if [ -n "${1:-}" ] && [ "$o" = "$1" ]; then
+      dev_shutdown "$id"; rm -f "$f"; echo "released $id (its session ended)"
+    elif ! owner_alive "$o"; then
+      dev_shutdown "$id"; rm -f "$f"; echo "released $id (owner ${o:-unknown} gone)"
+    fi
+  done
+}
+
 # Split a comma-separated pattern list into lines.
 patterns() { printf '%s\n' "$1" | tr ',' '\n' | sed '/^$/d'; }
 

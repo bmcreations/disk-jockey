@@ -471,6 +471,65 @@ ap off >/dev/null
 ok "autopilot: off removes the job" 'grep -q "autopilot=off" "$HOME/.disk-jockey/config"'
 rm -f "$HOME/.disk-jockey/autopilot."* "$HOME/.disk-jockey/notified."*
 
+echo "== mcp.sh (agent device coordination)"
+MB="$T/mcpbin"; mkdir -p "$MB"; MBOOT="$T/mboot"; MALL="$T/mall"; : >"$MBOOT"
+printf '%s\tiPhone 16 Pro\n%s\tiPhone Duo\n%s\tiPhone SE\n' "$(U A)" "$(U B)" "$(U C)" >"$MALL"
+cat >"$MB/xcrun" <<EOF
+#!/bin/sh
+case "\$2" in
+  list) echo "== Devices =="; echo "-- iOS 27.0 --"
+    while IFS="	" read -r u n; do st=Shutdown; grep -qx "\$u" "$MBOOT" && st=Booted
+      [ "\$4" = booted ] && [ "\$st" != Booted ] && continue; echo "    \$n (\$u) (\$st) "; done <"$MALL" ;;
+  boot) echo "\$3" >>"$MBOOT" ;;
+  bootstatus) ;;
+  shutdown) grep -vx "\$3" "$MBOOT" >"$MBOOT.n"; mv "$MBOOT.n" "$MBOOT" ;;
+esac
+EOF
+printf '#!/bin/sh\n[ "$1" = devices ] && echo "List of devices attached"\n' >"$MB/adb"
+chmod +x "$MB"/*
+sleep 300 & S1=$!
+sleep 300 & S2=$!
+sleep 300 & S3=$!
+mcp() { # owner-pid json-lines... ; prints one line per reply
+  local who="$1"; shift
+  printf '%s\n' "$@" | PATH="$MB:$PATH" RD_AGENT_PID="$who sleep" RD_TEST_MEM="ok 60 0" bash "$S/mcp.sh"
+}
+call() { printf '{"jsonrpc":"2.0","id":%s,"method":"tools/call","params":{"name":"%s","arguments":%s}}' "$1" "$2" "${3:-{\}}"; }
+text_of() { sed -n 's/.*"text":"\(.*\)"}\],"isError".*/\1/p'; }
+out=$(mcp "$S1" '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"claude-code","version":"2"}}}' '{"jsonrpc":"2.0","method":"notifications/initialized"}' '{"jsonrpc":"2.0","id":"two","method":"tools/list"}')
+ok "mcp: notifications get no reply" '[ "$(printf "%s\n" "$out" | grep -c .)" = 2 ]' "$out"
+ok "mcp: initialize echoes the protocol version" 'printf "%s\n" "$out" | head -n 1 | grep -q "\"id\":1,.*\"protocolVersion\":\"2025-06-18\""' "$out"
+ok "mcp: string ids answered as strings, six tools listed" 'printf "%s\n" "$out" | tail -n 1 | grep -q "\"id\":\"two\"" && [ "$(printf "%s\n" "$out" | tail -n 1 | grep -o "\"inputSchema\"" | wc -l | tr -d " ")" = 6 ]' "$out"
+ok "mcp: replies are valid JSON" 'printf "%s\n" "$out" | while IFS= read -r l; do valid_json "$l" || exit 1; done'
+out=$(mcp "$S1" "$(call 3 acquire_simulator '{"name":"Duo"}')")
+ok "mcp: nothing booted: acquire boots the requested simulator" 'grep -qx "$(U B)" "$MBOOT" && echo "$out" | grep -q "\"isError\":false" && echo "$out" | text_of | grep -q "$(U B)"' "$out"
+ok "mcp: and records it as this session's" 'grep -q "^$S1 sleep" "$HOME/.disk-jockey/devices/sim:$(U B)"'
+out=$(mcp "$S2" "$(call 4 acquire_simulator)")
+ok "mcp: a second session gets a different simulator" 'echo "$out" | text_of | grep -q "Booted iPhone 16 Pro" && ! echo "$out" | text_of | grep -q "$(U B)"' "$out"
+out=$(mcp "$S3" "$(call 5 acquire_simulator)")
+ok "mcp: at the cap with every simulator held: an error naming the holders" 'echo "$out" | grep -q "\"isError\":true" && echo "$out" | text_of | grep -q "held by another session"' "$out"
+out=$(mcp "$S1" "$(call 6 acquire_simulator '{"name":"Duo"}')")
+ok "mcp: asking again for your own device returns it" 'echo "$out" | text_of | grep -q "already booted, now recorded as yours"' "$out"
+out=$(mcp "$S3" "$(call 7 release_device "{\"device\":\"$(U B)\"}")")
+ok "mcp: releasing another session's device is refused" 'echo "$out" | grep -q "\"isError\":true" && grep -qx "$(U B)" "$MBOOT"' "$out"
+kill "$S2" 2>/dev/null; wait "$S2" 2>/dev/null
+out=$(mcp "$S3" "$(call 8 acquire_simulator)")
+ok "mcp: a device whose owner died is free again" 'echo "$out" | text_of | grep -q "iPhone 16 Pro" && grep -q "^$S3 sleep" "$HOME/.disk-jockey/devices/sim:$(U A)"' "$out"
+out=$(mcp "$S1" "$(call 9 disk_status)")
+ok "mcp: disk_status shows yours and others'" 'echo "$out" | text_of | grep -q "iPhone Duo ($(U B)): yours" && echo "$out" | text_of | grep -q "iPhone 16 Pro ($(U A)): held by another session"' "$out"
+echo '{"session_id":"m1","reason":"prompt_input_exit"}' | PATH="$MB:$PATH" RD_HOOK_SYNC=1 RD_AGENT_PID="$S1 sleep" bash "$S/hooks.sh" session-end
+ok "mcp: session end shuts down that session's devices while others run" '! grep -qx "$(U B)" "$MBOOT" && grep -qx "$(U A)" "$MBOOT"' "boot=$(tr '\n' ' ' <"$MBOOT") devs=$(cd "$HOME/.disk-jockey/devices" && for f in *; do printf '%s=%s ' "$f" "$(cat "$f")"; done) S1=$S1 S3=$S3 log=$(tail -3 "$HOME/.disk-jockey/sessions/log" | tr '\n' ' ')"
+out=$(mcp "$S3" "$(call 10 release_device "{\"device\":\"$(U A)\",\"shutdown\":false}")")
+ok "mcp: release with shutdown false leaves it running" '[ ! -e "$HOME/.disk-jockey/devices/sim:$(U A)" ] && grep -qx "$(U A)" "$MBOOT"' "$out"
+(cd "$R/app" && g worktree add $W/mcpdone -b agent/mcpdone && cd $W/mcpdone && echo q >q.txt && g add q.txt && g commit -m q && cd "$R/app" && g merge --no-ff agent/mcpdone -m "merge mcpdone")
+out=$(mcp "$S3" "$(call 11 worktree_done "{\"repo\":\"$R/app/$W/mcpdone\"}")")
+ok "mcp: worktree_done removes the merged worktree" '[ ! -e "$R/app/$W/mcpdone" ] && echo "$out" | text_of | grep -q MERGED' "$out"
+ok "mcp: worktree_done leaves REVIEW worktrees" '[ -f "$R/app/$W/dirty/new.txt" ]'
+out=$(mcp "$S3" "$(call 12 cleanup_orphans)" '{"jsonrpc":"2.0","id":13,"method":"nope"}')
+ok "mcp: cleanup_orphans runs; unknown methods get -32601" 'echo "$out" | head -n 1 | grep -q "\"isError\":false" && echo "$out" | tail -n 1 | grep -q "\"code\":-32601"' "$out"
+kill "$S1" "$S3" 2>/dev/null; wait "$S1" "$S3" 2>/dev/null
+rm -rf "$HOME/.disk-jockey/devices"
+
 echo "== preflight.sh / disk-guard.sh"
 ok "preflight runs" 'bash "$S/preflight.sh" >/dev/null 2>&1'
 ok "guard warns under threshold" 'bash "$S/disk-guard.sh" 999999G | grep -q "LOW DISK"'
@@ -520,7 +579,7 @@ DJ="$REPO_ROOT/bin/disk-jockey"
 ok "command: version matches VERSION" '[ "$(bash "$DJ" --version)" = "disk-jockey $(cat "$REPO_ROOT/VERSION")" ]'
 ok "command: unknown subcommand exits 2" 'bash "$DJ" nope >/dev/null 2>&1; [ $? = 2 ]'
 ok "command: subcommands reach their script" 'bash "$DJ" clean --help | grep -q "Usage: clean.sh"'
-ok "command: every subcommand has --help" 'for c in preflight scan clean worktrees sweep schedule guard dj quarantine hooks autopilot; do bash "$DJ" $c --help 2>/dev/null | grep -q "Usage" || exit 1; done'
+ok "command: every subcommand has --help" 'for c in preflight scan clean worktrees sweep schedule guard dj quarantine hooks autopilot mcp; do bash "$DJ" $c --help 2>/dev/null | grep -q "Usage" || exit 1; done'
 if command -v git >/dev/null 2>&1 && command -v tar >/dev/null 2>&1; then
   # Install from a snapshot of the working tree (committed or not) into a throwaway home.
   SRC="$T/src"; mkdir -p "$SRC"

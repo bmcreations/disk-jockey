@@ -108,6 +108,7 @@ Then run `~/.agents/skills/disk-jockey/bin/disk-jockey`, or the scripts in `scri
 | `autopilot.sh` | Background job that keeps free space above a target: orphans and merged worktrees always, then idle build output oldest first |
 | `schedule.sh` | Daily tier-1 cleanup, only when free space drops below a threshold (launchd or systemd) |
 | `quarantine.sh` | Opt-in undo: cleanup moves items aside for N days instead of deleting them |
+| `mcp.sh` | MCP server: agents acquire and release devices, check disk status, clean up merged worktrees |
 | `hooks.sh` | Agent hooks: cap booted devices across sessions, warn agents under memory pressure, shut down what sessions booted |
 | `disk-guard.sh` | One-line low-disk warning for agent SessionStart hooks |
 
@@ -196,6 +197,23 @@ Unrelated tool calls exit in a few milliseconds, and a hook that times out never
 ```
 
 Other agents can call `hooks.sh session-start --session ID` and `session-end --session ID` from their own hooks.
+
+**Let agents coordinate devices directly (optional MCP server).** Hooks and autopilot infer what agents are doing; the MCP server lets agents say it:
+
+```bash
+claude mcp add --scope user disk-jockey -- bash ~/.agents/skills/disk-jockey/scripts/mcp.sh
+```
+
+| Tool | What it does |
+|---|---|
+| `acquire_simulator` | A booted simulator no other session holds, or boots one within the cap; recorded as this session's |
+| `acquire_emulator` | A running emulator no other session holds |
+| `release_device` | Gives it back and shuts it down |
+| `disk_status` | Free space, autopilot target, memory pressure, who holds which device |
+| `worktree_done` | Removes the repo's merged, clean worktrees |
+| `cleanup_orphans` | Deletes build folders whose project is gone |
+
+Ownership is recorded per agent process, so a session's devices are shut down the moment it ends, even while other sessions keep running, and devices of a session that crashed are reaped by the next session or autopilot. It's bash, about 3 MB per session, with no daemon.
 
 **Daily safety net, if you'd rather not run autopilot.** Orphaned build folders every day, plus tier 1 cleanup when free space drops below a threshold:
 

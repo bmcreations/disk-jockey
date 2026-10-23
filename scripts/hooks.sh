@@ -304,6 +304,9 @@ SessionEnd shuts down simulators and emulators booted while agents worked, once 
 Both clear build folders whose project is gone (deleted worktrees' DerivedData and XcodeBuildMCP
   workspaces) in the background, at most every 10 minutes. Off with orphan_sweep=off in ~/.disk-jockey/config.
 Other agents: call "$run session-start" and "$run session-end" with --session ID from their own hooks.
+
+Optional, so agents can acquire and release devices explicitly (exact per-session shutdown):
+  claude mcp add --scope user disk-jockey -- bash $(tilde "$RD_DIR/mcp.sh")
 EOF
     ;;
 
@@ -476,6 +479,8 @@ $note"
     agent_pid >"$dir/active/$sid"
     log_line "start $sid${reason:+ ($reason)}"
     sweep_orphans
+    # Devices acquired through the MCP server by sessions that have since died.
+    reap_devices | while IFS= read -r l; do log_line "$l"; done
     [ -n "$guard" ] && bash "$RD_DIR/disk-guard.sh" "$guard"
     # Plain stdout from SessionStart becomes context the agent sees.
     read -r plvl ppct pswap < <(pressure)
@@ -490,6 +495,12 @@ $note"
   session-end)
     [ -n "$sid" ] || { log "session-end: no session id"; exit 0; }
     sweep_orphans
+    # Exact ownership first: devices this session acquired through the MCP server go now,
+    # whatever other sessions are doing.
+    case "$reason" in
+      clear | resume) ;;
+      *) reap_devices "$(proc_owner)" | while IFS= read -r l; do log_line "end $sid: $l"; done ;;
+    esac
     [ -d "$dir" ] || exit 0
     rm -f "$dir/active/$sid" "$dir/warned-$sid"
     case "$reason" in
@@ -509,7 +520,12 @@ $note"
       log_line "end $sid: no baseline recorded, leaving devices"
       exit 0
     fi
-    stop=$(booted_devices | grep -vxF -f "$dir/baseline")
+    stop=$(booted_devices | grep -vxF -f "$dir/baseline" | while IFS= read -r d; do
+      # A device an agent acquired through the MCP server stays while its owner lives.
+      o=$(dev_owner "$d")
+      if [ -n "$o" ] && owner_alive "$o"; then continue; fi
+      printf '%s\n' "$d"
+    done)
     rm -f "$dir/baseline"
     if [ -z "$stop" ]; then
       log_line "end $sid: nothing booted during sessions"

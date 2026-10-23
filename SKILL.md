@@ -119,6 +119,10 @@ Compare free space before and after. If much less was freed than expected on mac
 - **Per-task cleanup:** without the hooks, at the end of a task shut down simulators the task booted (`xcrun simctl shutdown UDID`), close emulators it started, and stop Gradle daemons when no build runs.
 - **Transcript retention:** agent transcripts (`~/.claude/projects`) grow without limit unless retention is configured. Point the user to their agent's retention setting.
 
+## When the disk-jockey MCP tools are available
+
+Prefer them over shelling out: `acquire_simulator` before booting a simulator (use the UDID it returns), `release_device` when your task is done, `worktree_done` with the repo path after your PR merges, `disk_status` before heavy builds. Never drive a device it reports as held by another session.
+
 ## Failure modes to tell the user about
 
 - **Device cap denials.** With the hooks installed, a boot over the cap is denied with a list of booted devices. Reuse one of those by UDID. When loupe is running, the list marks each device free, claimed or hands off: pick a free one, claim it with the curl the message gives (it carries your session id), and never drive one another session claimed. Don't try to get around the cap (other boot commands, killing other sessions' devices); ask the user to raise it or free a device.

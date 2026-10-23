@@ -287,6 +287,8 @@ case "$cmd" in
     ;;
   tick)
     [ "$(rd_conf autopilot off)" = on ] || exit 0
+    # Devices whose owning agent session died without releasing them.
+    reap_devices | while IFS= read -r l; do alog "$l"; done
     free=$(free_kb)
     if [ "$free" -lt "$(floor_kb)" ]; then
       due=1 emergency=1
