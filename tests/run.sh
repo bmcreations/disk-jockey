@@ -526,7 +526,9 @@ out=$(mcp "$S1" "$(call 9 disk_status)")
 ok "mcp: disk_status shows yours and others'" 'echo "$out" | text_of | grep -q "iPhone Duo ($(U B)): yours" && echo "$out" | text_of | grep -q "iPhone 16 Pro ($(U A)): held by another session"' "$out"
 echo '{"session_id":"m1","reason":"prompt_input_exit"}' | PATH="$MB:$PATH" RD_HOOK_SYNC=1 RD_AGENT_PID="$S1 sleep" bash "$S/hooks.sh" session-end
 ok "mcp: session end shuts down that session's devices while others run" '! grep -qx "$(U B)" "$MBOOT" && grep -qx "$(U A)" "$MBOOT"' "boot=$(tr '\n' ' ' <"$MBOOT") devs=$(cd "$HOME/.disk-jockey/devices" && for f in *; do printf '%s=%s ' "$f" "$(cat "$f")"; done) S1=$S1 S3=$S3 log=$(tail -3 "$HOME/.disk-jockey/sessions/log" | tr '\n' ' ')"
-out=$(mcp "$S3" "$(call 10 release_device "{\"device\":\"$(U A)\",\"shutdown\":false}")")
+# Built outside the nested "$( )": bash 3.2 splits an escaped JSON literal with a comma in there.
+rel_args=$(printf '{"device":"%s","shutdown":false}' "$(U A)")
+out=$(mcp "$S3" "$(call 10 release_device "$rel_args")")
 ok "mcp: release with shutdown false leaves it running" '[ ! -e "$HOME/.disk-jockey/devices/sim:$(U A)" ] && grep -qx "$(U A)" "$MBOOT"' "$out"
 (cd "$R/app" && g worktree add $W/mcpdone -b agent/mcpdone && cd $W/mcpdone && echo q >q.txt && g add q.txt && g commit -m q && cd "$R/app" && g merge --no-ff agent/mcpdone -m "merge mcpdone")
 out=$(mcp "$S3" "$(call 11 worktree_done "{\"repo\":\"$R/app/$W/mcpdone\"}")")
