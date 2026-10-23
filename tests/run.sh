@@ -494,7 +494,12 @@ mcp() { # owner-pid json-lines... ; prints one line per reply
   local who="$1"; shift
   printf '%s\n' "$@" | PATH="$MB:$PATH" RD_AGENT_PID="$who sleep" RD_TEST_MEM="ok 60 0" bash "$S/mcp.sh"
 }
-call() { printf '{"jsonrpc":"2.0","id":%s,"method":"tools/call","params":{"name":"%s","arguments":%s}}' "$1" "$2" "${3:-{\}}"; }
+# No "${3:-{}}": bash 3.2 brace-expands that default around the commas in the arguments.
+call() {
+  local a='{}'
+  [ -n "${3:-}" ] && a="$3"
+  printf '{"jsonrpc":"2.0","id":%s,"method":"tools/call","params":{"name":"%s","arguments":%s}}' "$1" "$2" "$a"
+}
 text_of() { sed -n 's/.*"text":"\(.*\)"}\],"isError".*/\1/p'; }
 out=$(mcp "$S1" '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"claude-code","version":"2"}}}' '{"jsonrpc":"2.0","method":"notifications/initialized"}' '{"jsonrpc":"2.0","id":"two","method":"tools/list"}')
 ok "mcp: notifications get no reply" '[ "$(printf "%s\n" "$out" | grep -c .)" = 2 ]' "$out"
