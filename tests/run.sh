@@ -220,7 +220,7 @@ sha() { bash -c '. "$1/lib.sh"; sha12 "$2"' _ "$S" "$1"; }
 mkdir -p "$R/app/App.xcodeproj"
 plist "$DD/App-live" "$R/app/App.xcodeproj"; blob "$DD/App-live/Build"
 plist "$DD/App-gone" "$HOME/code/gone-wt/App.xcodeproj"; blob "$DD/App-gone/Build"
-plist "$DD/Amp-gone" "$HOME/code/a&b/App.xcodeproj"; blob "$DD/Amp-gone/Build"
+plist "$DD/Amp-gone" "$HOME/code/a&amp;b/App.xcodeproj"; blob "$DD/Amp-gone/Build"
 blob "$DD/NoInfo-x/Build"; blob "$DD/ModuleCache.noindex"
 plist "$DD/Vol-y" "/Volumes/dj-not-mounted-$$/x/App.xcodeproj"; blob "$DD/Vol-y/Build"
 mroot="$R/app/.claude/worktrees/mlive"; mkdir -p "$mroot"
