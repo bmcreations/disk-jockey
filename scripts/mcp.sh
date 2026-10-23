@@ -63,6 +63,13 @@ holder() { # device-id (sim:UDID | emu:SERIAL)
   echo ""
 }
 
+# free / yours / held by ... (a function, not a case inside $( ), which bash 3.2 can't parse)
+holder_word() {
+  local h
+  h=$(holder "$1")
+  if [ -z "$h" ]; then echo free; elif [ "$h" = me ]; then echo yours; else echo "held by $h"; fi
+}
+
 do_acquire_sim() {
   local want_udid want_name max booted n line u nm h pick="" pname=""
   want_udid=$(field udid) want_name=$(field name)
@@ -72,7 +79,7 @@ do_acquire_sim() {
   while IFS=$'\t' read -r u nm; do
     [ -n "$u" ] || continue
     [ -n "$want_udid" ] && [ "$u" != "$want_udid" ] && continue
-    [ -n "$want_name" ] && case "$nm" in *"$want_name"*) ;; *) continue ;; esac
+    [ -n "$want_name" ] && case "$nm" in (*"$want_name"*) ;; (*) continue ;; esac
     h=$(holder "sim:$u")
     if [ "$h" = me ] || [ -z "$h" ]; then pick="$u" pname="$nm"; break; fi
     [ -n "$want_udid" ] && { echo "ERR Simulator $nm ($u) is held by $h. Pick another or ask the user."; return; }
@@ -86,7 +93,7 @@ EOF
     fi
     line=$(shutdown_sims | while IFS=$'\t' read -r u nm; do
       [ -n "$want_udid" ] && [ "$u" != "$want_udid" ] && continue
-      [ -n "$want_name" ] && case "$nm" in *"$want_name"*) ;; *) continue ;; esac
+      [ -n "$want_name" ] && case "$nm" in (*"$want_name"*) ;; (*) continue ;; esac
       printf '%s\t%s\n' "$u" "$nm"
     done | head -n 1)
     [ -n "$line" ] || { echo "ERR No shut-down iOS simulator matches$([ -n "$want_name" ] && echo " '$want_name'")$([ -n "$want_udid" ] && echo " $want_udid"). Create one in Xcode or pick another name."; return; }
@@ -146,11 +153,11 @@ Device cap: $(rd_conf max_simulators 2) simulators, $(rd_conf max_emulators 1) e
   while IFS=$'\t' read -r u nm; do
     [ -n "$u" ] || continue
     out="$out
-Simulator $nm ($u): $(h=$(holder "sim:$u"); case "$h" in '') echo free ;; me) echo yours ;; *) echo "held by $h" ;; esac)"
+Simulator $nm ($u): $(holder_word "sim:$u")"
   done < <(booted_sims)
   for s in $(emulators); do
     out="$out
-Emulator $s: $(h=$(holder "emu:$s"); case "$h" in '') echo free ;; me) echo yours ;; *) echo "held by $h" ;; esac)"
+Emulator $s: $(holder_word "emu:$s")"
   done
   echo "OK $out"
 }

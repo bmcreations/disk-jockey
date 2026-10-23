@@ -513,8 +513,10 @@ ok "mcp: asking again for your own device returns it" 'echo "$out" | text_of | g
 out=$(mcp "$S3" "$(call 7 release_device "{\"device\":\"$(U B)\"}")")
 ok "mcp: releasing another session's device is refused" 'echo "$out" | grep -q "\"isError\":true" && grep -qx "$(U B)" "$MBOOT"' "$out"
 kill "$S2" 2>/dev/null; wait "$S2" 2>/dev/null
+# Git Bash can't see whether a native process is alive, so owners never count as dead on Windows.
+is_windows_host && echo "$S3 sleep" >"$HOME/.disk-jockey/devices/sim:$(U A)"
 out=$(mcp "$S3" "$(call 8 acquire_simulator)")
-ok "mcp: a device whose owner died is free again" 'echo "$out" | text_of | grep -q "iPhone 16 Pro" && grep -q "^$S3 sleep" "$HOME/.disk-jockey/devices/sim:$(U A)"' "$out"
+is_windows_host || ok "mcp: a device whose owner died is free again" 'echo "$out" | text_of | grep -q "iPhone 16 Pro" && grep -q "^$S3 sleep" "$HOME/.disk-jockey/devices/sim:$(U A)"' "$out"
 out=$(mcp "$S1" "$(call 9 disk_status)")
 ok "mcp: disk_status shows yours and others'" 'echo "$out" | text_of | grep -q "iPhone Duo ($(U B)): yours" && echo "$out" | text_of | grep -q "iPhone 16 Pro ($(U A)): held by another session"' "$out"
 echo '{"session_id":"m1","reason":"prompt_input_exit"}' | PATH="$MB:$PATH" RD_HOOK_SYNC=1 RD_AGENT_PID="$S1 sleep" bash "$S/hooks.sh" session-end
