@@ -217,6 +217,13 @@ if [ -d "$RD_QDIR" ]; then
   [ "${qkb:-0}" -gt 0 ] && row INFO quarantine "$(human "$qkb")" "Held for undo, not freed yet. disk-jockey quarantine list; purge --all to free it."
 fi
 
+# --- Autopilot keeps this from coming back
+if [ "$(rd_conf autopilot off)" = on ]; then
+  row OK autopilot "on" ""
+else
+  row INFO autopilot "off" "disk-jockey autopilot on: keeps space free in the background (orphans, merged worktrees, idle build output)."
+fi
+
 # --- Uptime: swap and temp only fully clear on reboot
 if is_mac; then
   # Format: { sec = 1791990000, usec = 123 } ... ; anchor on "{ sec" so usec isn't matched.

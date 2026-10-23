@@ -256,7 +256,9 @@ handle() { # repo wt head branch locked prunable main_head
 audit_repo() {
   local repo="$1" line wt="" head="" branch="" locked=0 prunable=0 first=1 main_head=""
   if [ "$merged_mode" = 1 ] && [ "$fetch" = 1 ]; then
-    GIT_TERMINAL_PROMPT=0 git -C "$repo" fetch -q origin >/dev/null 2>&1 </dev/null
+    # Never wait on a password or passphrase prompt (autopilot runs with nobody watching).
+    GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes -o ConnectTimeout=10}" \
+      git -C "$repo" fetch -q origin >/dev/null 2>&1 </dev/null
   fi
   while IFS= read -r line; do
     case "$line" in

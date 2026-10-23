@@ -53,6 +53,7 @@ disk-jockey scan            # where the space is, by tier
 disk-jockey worktrees ~/dev # stale agent worktrees
 disk-jockey clean           # dry run; add --apply to act
 disk-jockey quarantine on   # optional: move instead of delete, with undo
+disk-jockey autopilot on    # and never run any of this again
 ```
 
 Arrow keys move, space toggles, Enter continues. Every command takes `--help`.
@@ -104,6 +105,7 @@ Then run `~/.agents/skills/disk-jockey/bin/disk-jockey`, or the scripts in `scri
 | `worktrees.sh` | Audits every linked worktree, nested ones included. Detects squash-merged PRs with `gh`. `--merged` cleans up right after a merge |
 | `clean.sh` | Tiered cleanup with the tools' own commands where they exist (`simctl`, `brew cleanup`, `pnpm store prune`) |
 | `sweep.sh` | `build/`, `.gradle`, `node_modules`, `target/`, `.build` in projects idle for N days |
+| `autopilot.sh` | Background job that keeps free space above a target: orphans and merged worktrees always, then idle build output oldest first |
 | `schedule.sh` | Daily tier-1 cleanup, only when free space drops below a threshold (launchd or systemd) |
 | `quarantine.sh` | Opt-in undo: cleanup moves items aside for N days instead of deleting them |
 | `hooks.sh` | Agent hooks: cap booted devices across sessions, warn agents under memory pressure, shut down what sessions booted |
@@ -144,6 +146,20 @@ Or for a single run: `disk-jockey clean --apply --quarantine`. Worktrees are mov
 
 ## Keep the floor clear
 
+**Autopilot, so nobody has to run disk-jockey.**
+
+```bash
+disk-jockey autopilot on --target 80G --floor 20G
+```
+
+A background job under your own account (launchd, systemd `--user` or Task Scheduler; no root) checks free space every 5 minutes, which costs one `df`. Every 30 minutes, or right away when free space falls under the floor, it runs a pass:
+
+1. **Always:** build folders of deleted projects, merged worktrees with nothing uncommitted, expired quarantine.
+2. **Only while free space is under the target**, oldest output first, stopping as soon as it's back above: tier-1 caches, build output of projects idle 14 days, then 7, build caches unused for 2 days, then projects idle 3 days.
+3. **Out of safe steps and still short:** one notification saying what's left (swap, a staged macOS update, REVIEW worktrees), at most every 6 hours.
+
+It never deletes tier 2 or 3, worktrees holding uncommitted or unpushed work, or anything a running process is using. It waits for power before the ladder when on battery, unless under the floor. With quarantine on, moved items count towards the target, and under the floor the oldest quarantined items are purged first. `disk-jockey autopilot status` shows the last pass; `--dry-run` on `autopilot run` shows what a pass would do.
+
 **Build folders of deleted worktrees go on their own.** Every worktree gets its own Xcode DerivedData and XcodeBuildMCP workspace, and both stay behind after the worktree is deleted (XcodeBuildMCP never sweeps them: [#526](https://github.com/getsentry/xcodebuildmcp/issues/526), 143 GB in that report). Each folder records the project it was built from (`WorkspacePath` in Xcode's `info.plist`, `workspaceRoot` in XcodeBuildMCP's daemon record), so disk-jockey deletes one only when every recorded project is gone: no idle-time guessing. A folder that records nothing, a project on an unmounted drive, or a workspace whose root still exists is kept. It runs from the session hooks (in the background, at most every 10 minutes) and on every scheduled run regardless of free space, or by hand with `disk-jockey clean --orphans --apply`.
 
 **Clean up worktrees the moment a PR merges.** The agent that opened the PR knows when it merged. Tell it, or put it in your `CLAUDE.md` / `AGENTS.md`:
@@ -181,7 +197,7 @@ Unrelated tool calls exit in a few milliseconds, and a hook that times out never
 
 Other agents can call `hooks.sh session-start --session ID` and `session-end --session ID` from their own hooks.
 
-**Daily safety net.** Tier 1 cleanup, only when free space drops below a threshold:
+**Daily safety net, if you'd rather not run autopilot.** Orphaned build folders every day, plus tier 1 cleanup when free space drops below a threshold:
 
 ```bash
 disk-jockey schedule install --threshold 50G

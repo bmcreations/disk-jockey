@@ -9,6 +9,7 @@ Usage: clean.sh [options]
   --apply                actually delete (default is a dry run)
   --only id1,id2         only these target ids
   --skip id1,id2         skip these target ids
+  --stale-days N         treat stale:DAYS targets as stale after at most N days
   --orphans              only build folders whose project no longer exists (always safe; for hooks and schedules)
   --if-free-below SIZE   exit without doing anything unless free space < SIZE (e.g. 50G)
   --quarantine           move to quarantine instead of deleting (undo with: disk-jockey quarantine restore)
@@ -25,6 +26,9 @@ while [ $# -gt 0 ]; do
     --only) only=",$2,"; shift ;;
     --skip) skip=",$2,"; shift ;;
     --orphans) orphans=1 ;;
+    --stale-days)
+      case "${2:-}" in '' | *[!0-9]*) log "--stale-days needs a number"; exit 2 ;; esac
+      export RD_STALE_MAX="$2"; shift ;;
     --if-free-below) threshold="$2"; shift ;;
     --quarantine) export RD_QUARANTINE=1 ;;
     --no-quarantine) export RD_QUARANTINE=0 ;;

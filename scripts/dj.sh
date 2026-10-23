@@ -506,9 +506,11 @@ printf '\n  %sFree: %s -> %s (+%s)%s\n' "$C_B$C_G" "$(human "$before")" "$(human
 q_enabled && note "  Quarantined items free their space when purged: disk-jockey quarantine purge --all"
 [ "$reboot_hint" = 1 ] && note "  Reboot when convenient: it deletes swap files and releases snapshot-pinned space."
 
-if bash "$D/schedule.sh" status 2>/dev/null | grep -qi 'not installed'; then
+if [ "$(rd_conf autopilot off)" != on ]; then
   echo
-  ask "Keep the floor clear with a daily safe-cache cleanup when free space drops below 50G?" &&
-    bash "$D/schedule.sh" install --threshold 50G
+  echo "Autopilot keeps this from coming back: every 30 minutes it clears build folders of deleted"
+  echo "projects and merged worktrees, and while free space is under 80G, idle build output oldest first."
+  echo "It never touches rebuild-cost caches, worktrees with your work, or anything in use."
+  ask "Turn on autopilot?" && bash "$D/autopilot.sh" on
 fi
 exit 0

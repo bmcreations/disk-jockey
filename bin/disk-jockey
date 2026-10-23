@@ -26,6 +26,7 @@ Usage: disk-jockey [command] [options]
   worktrees      audit agent worktrees (dry run unless --apply)
                  after a PR merges: disk-jockey worktrees --merged --apply
   sweep          build outputs in idle projects (dry run unless --apply)
+  autopilot      on|off|status: keeps space free in the background, no one has to run anything
   schedule       install|uninstall|status a daily cleanup
   quarantine     opt-in undo: on|off|status|list|restore|purge
   hooks          agent hooks: device cap, memory-pressure warnings, shut down what sessions booted
@@ -41,7 +42,7 @@ cmd="${1:-}"
 [ $# -gt 0 ] && shift
 case "$cmd" in
   "" | dj | interactive) exec bash "$S/dj.sh" "$@" ;;
-  preflight | scan | clean | worktrees | sweep | schedule | quarantine | hooks) exec bash "$S/$cmd.sh" "$@" ;;
+  preflight | scan | clean | worktrees | sweep | schedule | quarantine | hooks | autopilot) exec bash "$S/$cmd.sh" "$@" ;;
   guard) exec bash "$S/disk-guard.sh" "$@" ;;
   version | --version | -v) echo "disk-jockey $VERSION" ;;
   help | --help | -h) usage ;;

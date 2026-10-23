@@ -88,7 +88,11 @@ to_kb() {
   esac
 }
 
-free_kb() { df -Pk "${1:-$HOME}" 2>/dev/null | awk 'NR==2{print $4}'; }
+free_kb() {
+  # Tests: RD_TEST_FREE_FILE holds a number of KB (rewritable mid-run).
+  if [ -n "${RD_TEST_FREE_FILE:-}" ] && [ -f "$RD_TEST_FREE_FILE" ]; then cat "$RD_TEST_FREE_FILE"; return; fi
+  df -Pk "${1:-$HOME}" 2>/dev/null | awk 'NR==2{print $4}'
+}
 
 # Sum `du -sk` over newline-separated paths on stdin.
 size_kb() {
@@ -575,6 +579,8 @@ target_matches() {
   case "$action" in
     stale:*)
       days="${action#stale:}"
+      # RD_STALE_MAX tightens every stale:N to at most that many days (autopilot's deeper rungs).
+      if [ -n "${RD_STALE_MAX:-}" ] && [ "$RD_STALE_MAX" -lt "$days" ]; then days="$RD_STALE_MAX"; fi
       expand_paths "$paths" | while IFS= read -r m; do
         is_stale "$m" "$days" && printf '%s\n' "$m"
       done

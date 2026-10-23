@@ -412,6 +412,65 @@ if ! is_windows_host; then
   kill "$qp" 2>/dev/null; wait "$qp" 2>/dev/null
 fi
 
+echo "== autopilot"
+FREEF="$T/free"; AB="$T/autobin"; NOTE="$T/notified"; mkdir -p "$AB"; : >"$NOTE"
+for t in osascript notify-send; do printf '#!/bin/sh\necho "$*" >>"%s"\n' "$NOTE" >"$AB/$t"; done
+for t in launchctl systemctl schtasks; do printf '#!/bin/sh\necho "%s $*" >>"%s"\n' "$t" "$T/sched.log" >"$AB/$t"; done
+chmod +x "$AB"/*
+ap() { PATH="$AB:$PATH" RD_TEST_FREE_FILE="$FREEF" bash "$S/autopilot.sh" "$@" 2>&1; }
+# An idle project with build output, a tier-1 cache, a tier-2 cache, and the dirty REVIEW worktree from before.
+(cd "$R" && g init idleproj && cd idleproj && echo x >settings.gradle && echo 'build/' >.gitignore && g add -A && g commit -m init)
+blob "$R/idleproj/build" 300000
+find "$R/idleproj" -exec touch -t "$(ago 20)" {} + 2>/dev/null
+blob "$HOME/.gradle/caches/build-cache-1"; blob "$HOME/.gradle/caches/modules-2"
+echo $((900 * 1024 * 1024)) >"$FREEF"   # 900G free: nothing to do beyond the always-safe steps
+out=$(ap run)
+ok "autopilot: plenty of space: caches and idle builds left alone" '[ -d "$HOME/.gradle/caches/build-cache-1" ] && [ -d "$R/idleproj/build" ]' "$out"
+echo $((1024 * 1024)) >"$FREEF"         # 1G free, under the 80G target, above nothing
+out=$(ap run --dry-run)
+ok "autopilot: dry run lists the rungs and deletes nothing" 'echo "$out" | grep -q "would run: tier-1 caches" && echo "$out" | grep -q "would run: projects idle 3d" && [ -d "$R/idleproj/build" ]' "$out"
+ok "autopilot: dry run sends no notification" '[ ! -s "$NOTE" ]'
+out=$(ap run)
+ok "autopilot: short of target: tier-1 cache cleared" '[ ! -e "$HOME/.gradle/caches/build-cache-1" ]' "$(tail -12 "$HOME/.disk-jockey/autopilot.log")"
+ok "autopilot: short of target: idle project's build output cleared" '[ ! -e "$R/idleproj/build" ]' "$(tail -12 "$HOME/.disk-jockey/autopilot.log")"
+ok "autopilot: tier 2 never touched" '[ -d "$HOME/.gradle/caches/modules-2" ]'
+ok "autopilot: REVIEW worktree never touched" '[ -f "$R/app/$W/dirty/new.txt" ]'
+ok "autopilot: debug keystore never touched" '[ -f "$HOME/.android/debug.keystore" ]'
+if ! is_windows_host; then
+  ok "autopilot: out of safe rungs: notifies" 'grep -q "disk-jockey\|free" "$NOTE"' "$(cat "$NOTE")"
+  n=$(wc -l <"$NOTE"); ap run >/dev/null
+  ok "autopilot: notification at most every 6 hours" '[ "$(wc -l <"$NOTE")" = "$n" ]'
+fi
+ok "autopilot: each pass is logged" 'grep -q "tier-1 caches: freed" "$HOME/.disk-jockey/autopilot.log"'
+mkdir -p "$HOME/.disk-jockey/autopilot.lock"; sleep 60 & lp=$!; echo "$lp" >"$HOME/.disk-jockey/autopilot.lock/pid"
+ok "autopilot: one pass at a time" 'ap run | grep -q "already running"'
+kill "$lp" 2>/dev/null; wait "$lp" 2>/dev/null
+ok "autopilot: a lock left by a dead process is taken over" '! ap run | grep -q "already running"'
+rm -f "$HOME/.disk-jockey/autopilot.last"
+before=$(wc -l <"$HOME/.disk-jockey/autopilot.log")
+ap tick >/dev/null
+ok "autopilot: tick does nothing while off" '[ "$(wc -l <"$HOME/.disk-jockey/autopilot.log")" = "$before" ]'
+out=$(ap on --target 50G --floor 10G)
+ok "autopilot: on installs the job and saves settings" 'grep -q "autopilot=on" "$HOME/.disk-jockey/config" && grep -q "autopilot_target=50G" "$HOME/.disk-jockey/config" && [ -s "$T/sched.log" ]' "$out"
+ok "autopilot: floor must be below target" '! ap on --target 10G --floor 20G >/dev/null'
+ap on --target 50G --floor 10G >/dev/null
+echo $((30 * 1024 * 1024)) >"$FREEF"; date +%s >"$HOME/.disk-jockey/autopilot.last"
+before=$(wc -l <"$HOME/.disk-jockey/autopilot.log"); ap tick >/dev/null
+ok "autopilot: tick skips when a pass isn't due and space is above the floor" '[ "$(wc -l <"$HOME/.disk-jockey/autopilot.log")" = "$before" ]'
+echo $((5 * 1024 * 1024)) >"$FREEF"; ap tick >/dev/null
+ok "autopilot: under the floor, tick runs an emergency pass at once" 'tail -12 "$HOME/.disk-jockey/autopilot.log" | grep -q "pass (emergency)"'
+bash "$S/quarantine.sh" on >/dev/null
+blob "$HOME/.gradle/caches/build-cache-1"; bash "$S/clean.sh" --apply --only gradle-build-cache >/dev/null 2>&1
+ok "autopilot: (quarantine holds an item)" '[ -n "$(ls "$HOME/.disk-jockey/quarantine")" ]'
+ap tick >/dev/null
+ok "autopilot: under the floor, quarantine is purged first" '[ -z "$(ls "$HOME/.disk-jockey/quarantine")" ]' "$(tail -8 "$HOME/.disk-jockey/autopilot.log")"
+bash "$S/quarantine.sh" off >/dev/null
+ok "autopilot: status shows settings and last pass" 'ap status | grep -q "keep 50G free, floor 10G" && ap status | grep -q "Last pass: [0-9]"'
+ok "preflight shows autopilot on" 'bash "$S/preflight.sh" | grep -q "^OK    autopilot"'
+ap off >/dev/null
+ok "autopilot: off removes the job" 'grep -q "autopilot=off" "$HOME/.disk-jockey/config"'
+rm -f "$HOME/.disk-jockey/autopilot."* "$HOME/.disk-jockey/notified."*
+
 echo "== preflight.sh / disk-guard.sh"
 ok "preflight runs" 'bash "$S/preflight.sh" >/dev/null 2>&1'
 ok "guard warns under threshold" 'bash "$S/disk-guard.sh" 999999G | grep -q "LOW DISK"'
@@ -461,7 +520,7 @@ DJ="$REPO_ROOT/bin/disk-jockey"
 ok "command: version matches VERSION" '[ "$(bash "$DJ" --version)" = "disk-jockey $(cat "$REPO_ROOT/VERSION")" ]'
 ok "command: unknown subcommand exits 2" 'bash "$DJ" nope >/dev/null 2>&1; [ $? = 2 ]'
 ok "command: subcommands reach their script" 'bash "$DJ" clean --help | grep -q "Usage: clean.sh"'
-ok "command: every subcommand has --help" 'for c in preflight scan clean worktrees sweep schedule guard dj quarantine hooks; do bash "$DJ" $c --help 2>/dev/null | grep -q "Usage" || exit 1; done'
+ok "command: every subcommand has --help" 'for c in preflight scan clean worktrees sweep schedule guard dj quarantine hooks autopilot; do bash "$DJ" $c --help 2>/dev/null | grep -q "Usage" || exit 1; done'
 if command -v git >/dev/null 2>&1 && command -v tar >/dev/null 2>&1; then
   # Install from a snapshot of the working tree (committed or not) into a throwaway home.
   SRC="$T/src"; mkdir -p "$SRC"
