@@ -573,7 +573,7 @@ ok "mcp: wait_seconds gets the device once it's released" '[ -n "$dev_now" ] && 
 # A session holding the lock blocks others only while it lives; killed, it releases at once.
 : >"$MBOOT"; rm -rf "$HOME/.disk-jockey/devices"
 # The holder records its own pid, so it can be killed directly (Git Bash's pkill -P can't reach it).
-bash -c '. "$1/lib.sh"; dev_locked bash -c "echo \$\$ >\"$2\"; sleep 30"' _ "$S" "$T/holder.pid" &
+bash -c '. "$1/lib.sh"; dev_locked bash -c "echo \$\$ >\"$2\"; exec sleep 30"' _ "$S" "$T/holder.pid" &
 lh=$!
 sleep 1
 out=$(DJ_LOCK_WAIT=1 mcp "$S4" "$(call 24 acquire_simulator)")
