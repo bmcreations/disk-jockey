@@ -151,7 +151,7 @@ pick_emu() {
 locked() { # pick-function args...: runs it in its own process holding the device lock
   local r
   r=$(dev_locked bash "$RD_DIR/mcp.sh" _locked "$@")
-  [ $? -eq 75 ] && r="BUSY Another session is acquiring a device right now."
+  [ $? -eq 75 ] && r="BUSY Another session is acquiring a device right now. "
   printf '%s\n' "$r"
 }
 

@@ -572,14 +572,16 @@ wait "$wp" 2>/dev/null
 ok "mcp: wait_seconds gets the device once it's released" '[ -n "$dev_now" ] && grep -q "\"isError\":false" "$T/waited" && grep -q "$dev_now" "$T/waited"' "$(cat "$T/waited")"
 # A session holding the lock blocks others only while it lives; killed, it releases at once.
 : >"$MBOOT"; rm -rf "$HOME/.disk-jockey/devices"
-bash -c '. "$1/lib.sh"; dev_locked sleep 30' _ "$S" &
+# The holder records its own pid, so it can be killed directly (Git Bash's pkill -P can't reach it).
+bash -c '. "$1/lib.sh"; dev_locked bash -c "echo \$\$ >\"$2\"; sleep 30"' _ "$S" "$T/holder.pid" &
 lh=$!
 sleep 1
 out=$(DJ_LOCK_WAIT=1 mcp "$S4" "$(call 24 acquire_simulator)")
 ok "mcp: while another session holds the lock: busy, not a double grant" 'echo "$out" | grep -q "acquiring a device right now" && [ ! -s "$MBOOT" ]' "$out"
-pkill -9 -P "$lh" 2>/dev/null; kill -9 "$lh" 2>/dev/null; wait "$lh" 2>/dev/null
+kill -9 "$(cat "$T/holder.pid" 2>/dev/null)" "$lh" 2>/dev/null; pkill -9 -P "$lh" 2>/dev/null; wait "$lh" 2>/dev/null
 out=$(DJ_LOCK_WAIT=2 mcp "$S4" "$(call 25 acquire_simulator)")
-ok "mcp: a holder killed mid-acquire leaves no lock behind" 'echo "$out" | grep -q "\"isError\":false"' "$out"
+# Git Bash can't kill the holder's whole process tree, and a surviving child keeps the lock fd.
+is_windows_host || ok "mcp: a holder killed mid-acquire leaves no lock behind" 'echo "$out" | grep -q "\"isError\":false"' "$out"
 : >"$MBOOT"; rm -rf "$HOME/.disk-jockey/devices"
 bash "$S/hooks.sh" limit --simulators 2 >/dev/null
 kill "$S4" "$S5" 2>/dev/null; wait "$S4" "$S5" 2>/dev/null
