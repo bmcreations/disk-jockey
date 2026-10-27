@@ -544,8 +544,11 @@ race_ok=1 race_log=""
 for round in 1 2 3 4 5; do
   : >"$MBOOT"; rm -rf "$HOME/.disk-jockey/devices"
   mcp "$S4" "$(call 20 acquire_simulator)" >"$T/race4" &
+  r4=$!
   mcp "$S5" "$(call 21 acquire_simulator)" >"$T/race5" &
-  wait $! 2>/dev/null; sleep 1
+  r5=$!
+  # Both must finish before the next round resets the state, or a slow one's claim lands in it.
+  wait "$r4" "$r5" 2>/dev/null
   okn=$(cat "$T/race4" "$T/race5" | grep -c '"isError":false')
   bn=$(grep -c . "$MBOOT")
   race_log="$race_log round$round: ok=$okn booted=$bn;"
