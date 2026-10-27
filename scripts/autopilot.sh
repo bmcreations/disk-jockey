@@ -87,7 +87,7 @@ pass() { # dry emergency
   [ "$dry" = 1 ] && apply=""
   target=$(target_kb) floor=$(floor_kb)
   free=$(free_kb)
-  local start_free="$free" did=""
+  local start_free="$free"
   say() { [ "$dry" = 1 ] && echo "$*"; alog "$*"; }
   say "pass${emergency:+ (emergency)}: free $(human "$free"), target $(human "$target"), floor $(human "$floor")$([ "$dry" = 1 ] && echo ', dry run')"
 
@@ -107,7 +107,7 @@ pass() { # dry emergency
     [ "${#roots[@]}" -gt 0 ] && bash "$RD_DIR/worktrees.sh" $wargs $apply "${roots[@]}" </dev/null >/dev/null 2>&1
   fi
   free=$(free_kb)
-  [ "$free" -gt "$start_free" ] && did="$did orphans/worktrees +$(human $((free - start_free)))"
+  [ "$dry" = 0 ] && say "  orphaned build folders, merged worktrees: freed $(human $((free > start_free ? free - start_free : 0)))"
 
   # Emergency with quarantine on: the undo buffer goes first, oldest first, until above the floor.
   if [ "$free" -lt "$floor" ] && [ -d "$RD_QDIR" ] && [ "$dry" = 0 ]; then
