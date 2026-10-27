@@ -665,7 +665,9 @@ ok "FORCE_COLOR adds color" 'FORCE_COLOR=1 bash "$S/preflight.sh" | grep -qF "$e
 ok "FORCE_COLOR works with TERM=dumb" 'TERM=dumb FORCE_COLOR=1 bash "$S/preflight.sh" | grep -qF "$esc"'
 ok "NO_COLOR wins over FORCE_COLOR" '! NO_COLOR=1 FORCE_COLOR=1 bash "$S/preflight.sh" | grep -qF "$esc"'
 strip_ansi() { sed "s/$(printf '\033')\[[0-9;]*m//g"; }
-ok "columns stay aligned with color" '[ "$(FORCE_COLOR=1 bash "$S/preflight.sh" | strip_ansi | head -1)" = "$(bash "$S/preflight.sh" | head -1)" ]'
+# Free space is pinned: two runs can see a different free figure on a busy runner (29.9G, then 30.0G).
+echo $((40 * 1024 * 1024)) >"$T/free-pinned"
+ok "columns stay aligned with color" '[ "$(RD_TEST_FREE_FILE="$T/free-pinned" FORCE_COLOR=1 bash "$S/preflight.sh" | strip_ansi | head -1)" = "$(RD_TEST_FREE_FILE="$T/free-pinned" bash "$S/preflight.sh" | head -1)" ]'
 
 echo "== dj.sh (interactive)"
 blob "$HOME/.gradle/caches/build-cache-1"
