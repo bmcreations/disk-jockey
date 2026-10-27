@@ -469,27 +469,35 @@ dev_dir() { echo "$RD_STATE/devices"; }
 dev_owner() { cat "$(dev_dir)/$1" 2>/dev/null; }
 dev_claim() { mkdir -p "$(dev_dir)" && proc_owner >"$(dev_dir)/$1"; }
 dev_release() { rm -f "$(dev_dir)/$1"; }
-# One acquirer at a time, machine-wide: choosing a device and recording the claim happen under this lock,
-# so two sessions can't both be handed the last free one. Waits up to $1 seconds (default 15).
-# A lock whose holder died, or that is older than a minute (holder died before writing its pid), is taken over.
-dev_lock() {
-  local d i=0 tries p
-  d="$(dev_dir).lock"
-  tries=$((${1:-15} * 5))
+# One acquirer at a time, machine-wide: choosing a device and recording the claim run as one command
+# under a kernel file lock (perl's flock, else the flock command). The kernel drops the lock when the
+# holder exits, however it exits, so a crashed session can never leave a lock behind for two others
+# to "take over" at once. Exit 75 when the lock isn't free within DJ_LOCK_WAIT seconds (default 15).
+dev_locked() { # command args...
+  local f w="${DJ_LOCK_WAIT:-15}"
   mkdir -p "$(dev_dir)"
-  while ! mkdir "$d" 2>/dev/null; do
-    p=$(cat "$d/pid" 2>/dev/null)
-    if { [ -n "$p" ] && ! kill -0 "$p" 2>/dev/null; } || [ -n "$(find "$d" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then
-      rm -rf "$d"
-      continue
-    fi
-    i=$((i + 1))
-    [ "$i" -ge "$tries" ] && return 1
-    sleep 0.2
-  done
-  echo $$ >"$d/pid"
+  f="$(dev_dir).lock.file"
+  if have perl; then
+    # $^F: keep the lock's file descriptor open across exec, so the command holds the lock.
+    perl -MFcntl=:flock -e 'BEGIN { $^F = 255 } my ($f, $w) = (shift, shift);
+      open(my $h, ">>", $f) or exit 75; local $SIG{ALRM} = sub { exit 75 }; alarm $w;
+      flock($h, LOCK_EX) or exit 75; alarm 0; exec { $ARGV[0] } @ARGV or exit 126' "$f" "$w" "$@"
+  elif have flock; then
+    flock -w "$w" -E 75 "$f" "$@"
+  else
+    # Last resort: a mkdir lock, taken over only when a minute old (the critical section takes ms).
+    local d i=0 r
+    d="$(dev_dir).lock"
+    while ! mkdir "$d" 2>/dev/null; do
+      [ -n "$(find "$d" -maxdepth 0 -mmin +1 2>/dev/null)" ] && rm -rf "$d" && continue
+      i=$((i + 1)); [ "$i" -ge $((w * 5)) ] && return 75
+      sleep 0.2
+    done
+    "$@"; r=$?
+    rm -rf "$d"
+    return "$r"
+  fi
 }
-dev_unlock() { rm -rf "$(dev_dir).lock"; }
 dev_shutdown() {
   case "$1" in
     sim:*) have xcrun && xcrun simctl shutdown "${1#sim:}" >/dev/null 2>&1 ;;

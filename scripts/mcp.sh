@@ -81,11 +81,12 @@ claimed_sims() {
 }
 num_field() { printf '%s' "$MSG" | sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p" | head -n 1; }
 
-# Attempts print one of: "OK ...", "BUSY ..." (nothing free now; worth waiting), "ERR ..." (waiting won't help).
-attempt_sim() {
+# The critical sections run as their own process under dev_locked: choose and claim, nothing slow.
+# They print "OK ...", "BUSY ..." (nothing free now; worth waiting), "ERR ..." (waiting won't help),
+# or "BOOT <udid>	<name>" (claimed a shut-down simulator; the caller boots it outside the lock).
+pick_sim() {
   local want_udid="$1" want_name="$2" max booted claimed n line u nm h pick="" pname="" held=""
   max=$(rd_conf max_simulators 2)
-  dev_lock 15 || { echo "BUSY Another session is acquiring a device right now."; return; }
   booted=$(booted_sims)
   while IFS=$'\t' read -r u nm; do
     [ -n "$u" ] || continue
@@ -99,7 +100,6 @@ $booted
 EOF
   if [ -n "$pick" ]; then
     dev_claim "sim:$pick"
-    dev_unlock
     echo "OK Use $pname ($pick): already booted, now recorded as yours. Use -destination id=$pick (or simulatorId $pick). Call release_device with $pick when done."
     return
   fi
@@ -107,12 +107,10 @@ EOF
   claimed=$(claimed_sims)
   n=$({ printf '%s\n' "$booted" | cut -f1; printf '%s\n' "$claimed"; } | sed '/^$/d' | sort -u | grep -c .)
   if [ -n "$want_udid" ] && printf '%s\n' "$booted" | cut -f1 | grep -qx "$want_udid"; then
-    dev_unlock
     echo "BUSY $held"
     return
   fi
   if [ "$max" != 0 ] && [ "$n" -ge "$max" ]; then
-    dev_unlock
     echo "BUSY $n simulators are booted or booting (cap $max) and none is free for you$([ -n "$want_name" ] && echo " matching '$want_name'"). ${held:-}"
     return
   fi
@@ -123,44 +121,59 @@ EOF
     printf '%s\t%s\n' "$u" "$nm"
   done | head -n 1)
   if [ -z "$line" ]; then
-    dev_unlock
     echo "ERR No shut-down iOS simulator matches$([ -n "$want_name" ] && echo " '$want_name'")$([ -n "$want_udid" ] && echo " $want_udid"). Create one in Xcode or pick another name."
     return
   fi
-  pick="${line%%$'\t'*}" pname="${line#*$'\t'}"
   # Claimed before booting, so a concurrent acquire counts it and won't pick it.
-  dev_claim "sim:$pick"
-  dev_unlock
-  if ! xcrun simctl boot "$pick" >/dev/null 2>&1; then
-    dev_release "sim:$pick"
-    echo "ERR simctl could not boot $pname ($pick)."
-    return
-  fi
-  xcrun simctl bootstatus "$pick" -b >/dev/null 2>&1
-  echo "OK Booted $pname ($pick) and recorded it as yours. Use -destination id=$pick (or simulatorId $pick). Call release_device with $pick when done."
+  dev_claim "sim:${line%%$'\t'*}"
+  echo "BOOT $line"
 }
 
-attempt_emu() {
+pick_emu() {
   local want="$1" s h held=""
-  dev_lock 15 || { echo "BUSY Another session is acquiring a device right now."; return; }
   for s in $(emulators); do
     [ -n "$want" ] && [ "$s" != "$want" ] && continue
     h=$(holder "emu:$s")
     if [ -z "$h" ] || [ "$h" = me ]; then
       dev_claim "emu:$s"
-      dev_unlock
       echo "OK Use $s (adb -s $s), recorded as yours. Call release_device with $s when done."
       return
     fi
     held="$held$s: held by $h; "
   done
-  dev_unlock
   if [ -n "$held" ]; then
     echo "BUSY No running emulator is free$([ -n "$want" ] && echo " ($want)"). $held"
   else
     echo "ERR No emulator is running$([ -n "$want" ] && echo " as $want"). Start one (emulator -avd NAME; the device cap applies) or ask the user."
   fi
 }
+
+locked() { # pick-function args...: runs it in its own process holding the device lock
+  local r
+  r=$(dev_locked bash "$RD_DIR/mcp.sh" _locked "$@")
+  [ $? -eq 75 ] && r="BUSY Another session is acquiring a device right now."
+  printf '%s\n' "$r"
+}
+
+attempt_sim() {
+  local r pick pname
+  r=$(locked pick_sim "$1" "$2")
+  case "$r" in
+    "BOOT "*)
+      r="${r#BOOT }"
+      pick="${r%%$'\t'*}" pname="${r#*$'\t'}"
+      if ! xcrun simctl boot "$pick" >/dev/null 2>&1; then
+        dev_release "sim:$pick"
+        echo "ERR simctl could not boot $pname ($pick)."
+        return
+      fi
+      xcrun simctl bootstatus "$pick" -b >/dev/null 2>&1
+      echo "OK Booted $pname ($pick) and recorded it as yours. Use -destination id=$pick (or simulatorId $pick). Call release_device with $pick when done."
+      ;;
+    *) printf '%s\n' "$r" ;;
+  esac
+}
+attempt_emu() { locked pick_emu "$1"; }
 
 # Fail fast by default. wait_seconds (up to 300) retries every 2 seconds until something frees up.
 # Not a queue: whoever retries first after a release gets the device.
@@ -243,6 +256,15 @@ do_orphans() {
   out=$(NO_COLOR=1 bash "$RD_DIR/clean.sh" --orphans --apply 2>&1 | tail -n 15)
   echo "OK $out"
 }
+
+# Internal: a pick function run under the device lock by locked().
+if [ "${1:-}" = _locked ]; then
+  shift
+  "$@"
+  exit 0
+fi
+# The lock's child process must record the same owner as this server.
+[ -n "$ME" ] && export RD_AGENT_PID="$ME"
 
 mkdir -p "$RD_STATE" 2>/dev/null
 while IFS= read -r MSG || [ -n "$MSG" ]; do

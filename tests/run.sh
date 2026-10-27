@@ -543,6 +543,8 @@ bash "$S/hooks.sh" limit --simulators 1 >/dev/null
 race_ok=1 race_log=""
 for round in 1 2 3 4 5; do
   : >"$MBOOT"; rm -rf "$HOME/.disk-jockey/devices"
+  # A stale lock left by a crashed session (the old mkdir lock): once let two acquirers in together.
+  mkdir -p "$HOME/.disk-jockey/devices.lock"; echo 999999 >"$HOME/.disk-jockey/devices.lock/pid"
   mcp "$S4" "$(call 20 acquire_simulator)" >"$T/race4" &
   r4=$!
   mcp "$S5" "$(call 21 acquire_simulator)" >"$T/race5" &
@@ -567,7 +569,18 @@ sleep 4
 rel=$(printf '{"device":"%s","shutdown":false}' "$dev_now")
 mcp "$held_by" "$(call 23 release_device "$rel")" >/dev/null
 wait "$wp" 2>/dev/null
-ok "mcp: wait_seconds gets the device once it's released" 'grep -q "\"isError\":false" "$T/waited" && grep -q "$dev_now" "$T/waited"' "$(cat "$T/waited")"
+ok "mcp: wait_seconds gets the device once it's released" '[ -n "$dev_now" ] && grep -q "\"isError\":false" "$T/waited" && grep -q "$dev_now" "$T/waited"' "$(cat "$T/waited")"
+# A session holding the lock blocks others only while it lives; killed, it releases at once.
+: >"$MBOOT"; rm -rf "$HOME/.disk-jockey/devices"
+bash -c '. "$1/lib.sh"; dev_locked sleep 30' _ "$S" &
+lh=$!
+sleep 1
+out=$(DJ_LOCK_WAIT=1 mcp "$S4" "$(call 24 acquire_simulator)")
+ok "mcp: while another session holds the lock: busy, not a double grant" 'echo "$out" | grep -q "acquiring a device right now" && [ ! -s "$MBOOT" ]' "$out"
+pkill -9 -P "$lh" 2>/dev/null; kill -9 "$lh" 2>/dev/null; wait "$lh" 2>/dev/null
+out=$(DJ_LOCK_WAIT=2 mcp "$S4" "$(call 25 acquire_simulator)")
+ok "mcp: a holder killed mid-acquire leaves no lock behind" 'echo "$out" | grep -q "\"isError\":false"' "$out"
+: >"$MBOOT"; rm -rf "$HOME/.disk-jockey/devices"
 bash "$S/hooks.sh" limit --simulators 2 >/dev/null
 kill "$S4" "$S5" 2>/dev/null; wait "$S4" "$S5" 2>/dev/null
 kill "$S1" "$S3" 2>/dev/null; wait "$S1" "$S3" 2>/dev/null
