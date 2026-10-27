@@ -213,6 +213,8 @@ claude mcp add --scope user disk-jockey -- bash ~/.agents/skills/disk-jockey/scr
 | `worktree_done` | Removes the repo's merged, clean worktrees |
 | `cleanup_orphans` | Deletes build folders whose project is gone |
 
+Acquiring is atomic across sessions: two agents asking for the last free simulator at the same moment never both get it, and a device being booted counts against the cap. The loser fails fast with the holders named; pass `wait_seconds` (up to 300) to keep trying until one is released instead. That's retrying, not a queue: whoever asks first after a release wins.
+
 Ownership is recorded per agent process, so a session's devices are shut down the moment it ends, even while other sessions keep running, and devices of a session that crashed are reaped by the next session or autopilot. It's bash, about 3 MB per session, with no daemon.
 
 **Daily safety net, if you'd rather not run autopilot.** Orphaned build folders every day, plus tier 1 cleanup when free space drops below a threshold:

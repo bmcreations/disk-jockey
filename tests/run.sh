@@ -536,6 +536,37 @@ ok "mcp: worktree_done removes the merged worktree" '[ ! -e "$R/app/$W/mcpdone" 
 ok "mcp: worktree_done leaves REVIEW worktrees" '[ -f "$R/app/$W/dirty/new.txt" ]'
 out=$(mcp "$S3" "$(call 12 cleanup_orphans)" '{"jsonrpc":"2.0","id":13,"method":"nope"}')
 ok "mcp: cleanup_orphans runs; unknown methods get -32601" 'echo "$out" | head -n 1 | grep -q "\"isError\":false" && echo "$out" | tail -n 1 | grep -q "\"code\":-32601"' "$out"
+# Two sessions asking for the last free slot at the same moment: exactly one gets it.
+sleep 300 & S4=$!
+sleep 300 & S5=$!
+bash "$S/hooks.sh" limit --simulators 1 >/dev/null
+race_ok=1 race_log=""
+for round in 1 2 3 4 5; do
+  : >"$MBOOT"; rm -rf "$HOME/.disk-jockey/devices"
+  mcp "$S4" "$(call 20 acquire_simulator)" >"$T/race4" &
+  mcp "$S5" "$(call 21 acquire_simulator)" >"$T/race5" &
+  wait $! 2>/dev/null; sleep 1
+  okn=$(cat "$T/race4" "$T/race5" | grep -c '"isError":false')
+  bn=$(grep -c . "$MBOOT")
+  race_log="$race_log round$round: ok=$okn booted=$bn;"
+  { [ "$okn" = 1 ] && [ "$bn" = 1 ]; } || race_ok=0
+done
+ok "mcp: concurrent acquires for the last slot: one wins, the cap holds" '[ "$race_ok" = 1 ]' "$race_log $(cat "$T/race4" "$T/race5")"
+ok "mcp: the loser gets an error it can act on" 'cat "$T/race4" "$T/race5" | grep "\"isError\":true" | grep -q "wait_seconds"' "$(cat "$T/race4" "$T/race5")"
+# Waiting: S5 asks with wait_seconds while S4 holds the only slot; S4 releases a few seconds later.
+held_by=$S4; grep -q "\"isError\":false" "$T/race5" && held_by=$S5
+other=$S5; [ "$held_by" = "$S5" ] && other=$S4
+dev_now=$(cat "$MBOOT")
+wait_args=$(printf '{"wait_seconds":20}')
+mcp "$other" "$(call 22 acquire_simulator "$wait_args")" >"$T/waited" &
+wp=$!
+sleep 4
+rel=$(printf '{"device":"%s","shutdown":false}' "$dev_now")
+mcp "$held_by" "$(call 23 release_device "$rel")" >/dev/null
+wait "$wp" 2>/dev/null
+ok "mcp: wait_seconds gets the device once it's released" 'grep -q "\"isError\":false" "$T/waited" && grep -q "$dev_now" "$T/waited"' "$(cat "$T/waited")"
+bash "$S/hooks.sh" limit --simulators 2 >/dev/null
+kill "$S4" "$S5" 2>/dev/null; wait "$S4" "$S5" 2>/dev/null
 kill "$S1" "$S3" 2>/dev/null; wait "$S1" "$S3" 2>/dev/null
 rm -rf "$HOME/.disk-jockey/devices"
 

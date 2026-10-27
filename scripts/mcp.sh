@@ -31,8 +31,8 @@ flag() { printf '%s' "$MSG" | grep -Eq "\"$1\"[[:space:]]*:[[:space:]]*$2"; }
 
 TOOL_NAMES="acquire_simulator acquire_emulator release_device disk_status worktree_done cleanup_orphans"
 TOOLS='[
-{"name":"acquire_simulator","description":"Get an iOS simulator for this session instead of booting your own. Returns a booted simulator no other agent session holds (or boots one, within the machine-wide cap), and records it as yours so others skip it. Use its UDID for xcodebuild -destination id=UDID or XcodeBuildMCP simulatorId. Call release_device when done.","inputSchema":{"type":"object","properties":{"name":{"type":"string","description":"Device name to prefer, e.g. iPhone 16 Pro (substring match)"},"udid":{"type":"string","description":"A specific simulator UDID"}}}},
-{"name":"acquire_emulator","description":"Get a running Android emulator no other agent session holds, and record it as yours. Does not boot one: if none is free it says so. Use the serial with adb -s SERIAL. Call release_device when done.","inputSchema":{"type":"object","properties":{"serial":{"type":"string","description":"A specific serial, e.g. emulator-5554"}}}},
+{"name":"acquire_simulator","description":"Get an iOS simulator for this session instead of booting your own. Returns a booted simulator no other agent session holds (or boots one, within the machine-wide cap), and records it as yours so others skip it. Atomic across sessions: two concurrent requests never get the same device. If none is free it fails at once with the holders named, unless wait_seconds is set. Use its UDID for xcodebuild -destination id=UDID or XcodeBuildMCP simulatorId. Call release_device when done.","inputSchema":{"type":"object","properties":{"name":{"type":"string","description":"Device name to prefer, e.g. iPhone 16 Pro (substring match)"},"udid":{"type":"string","description":"A specific simulator UDID"},"wait_seconds":{"type":"integer","description":"If none is free, keep trying this long (max 300) instead of failing at once"}}}},
+{"name":"acquire_emulator","description":"Get a running Android emulator no other agent session holds, and record it as yours. Does not boot one: if none is free it says so. Use the serial with adb -s SERIAL. Call release_device when done.","inputSchema":{"type":"object","properties":{"serial":{"type":"string","description":"A specific serial, e.g. emulator-5554"},"wait_seconds":{"type":"integer","description":"If none is free, keep trying this long (max 300) instead of failing at once"}}}},
 {"name":"release_device","description":"Give back a simulator or emulator this session acquired. Shuts it down unless shutdown is false.","inputSchema":{"type":"object","properties":{"device":{"type":"string","description":"Simulator UDID or emulator serial"},"shutdown":{"type":"boolean","description":"Default true"}},"required":["device"]}},
 {"name":"disk_status","description":"Free disk space, autopilot target and floor, memory pressure, and which booted simulators/emulators each agent session holds. Check before heavy builds or before booting devices.","inputSchema":{"type":"object","properties":{}}},
 {"name":"worktree_done","description":"After a PR from a git worktree merges: remove that repo'\''s worktrees whose PR or branch is merged and that have nothing uncommitted. Your shell must not be inside the worktree being removed (it is reported IN-USE).","inputSchema":{"type":"object","properties":{"repo":{"type":"string","description":"Absolute path of the repo or any of its worktrees"}},"required":["repo"]}},
@@ -70,59 +70,125 @@ holder_word() {
   if [ -z "$h" ]; then echo free; elif [ "$h" = me ]; then echo yours; else echo "held by $h"; fi
 }
 
-do_acquire_sim() {
-  local want_udid want_name max booted n line u nm h pick="" pname=""
-  want_udid=$(field udid) want_name=$(field name)
+# Live claims on simulators, as UDIDs (includes one being booted right now).
+claimed_sims() {
+  local f o
+  for f in "$(dev_dir)"/sim:*; do
+    [ -f "$f" ] || continue
+    o=$(cat "$f" 2>/dev/null)
+    owner_alive "$o" && basename "$f" | sed 's/^sim://'
+  done
+}
+num_field() { printf '%s' "$MSG" | sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p" | head -n 1; }
+
+# Attempts print one of: "OK ...", "BUSY ..." (nothing free now; worth waiting), "ERR ..." (waiting won't help).
+attempt_sim() {
+  local want_udid="$1" want_name="$2" max booted claimed n line u nm h pick="" pname="" held=""
   max=$(rd_conf max_simulators 2)
+  dev_lock 15 || { echo "BUSY Another session is acquiring a device right now."; return; }
   booted=$(booted_sims)
-  n=$(printf '%s' "$booted" | grep -c .)
   while IFS=$'\t' read -r u nm; do
     [ -n "$u" ] || continue
     [ -n "$want_udid" ] && [ "$u" != "$want_udid" ] && continue
     [ -n "$want_name" ] && case "$nm" in (*"$want_name"*) ;; (*) continue ;; esac
     h=$(holder "sim:$u")
     if [ "$h" = me ] || [ -z "$h" ]; then pick="$u" pname="$nm"; break; fi
-    [ -n "$want_udid" ] && { echo "ERR Simulator $nm ($u) is held by $h. Pick another or ask the user."; return; }
+    held="$held$nm ($u): held by $h; "
   done <<EOF
 $booted
 EOF
-  if [ -z "$pick" ]; then
-    if [ "$max" != 0 ] && [ "$n" -ge "$max" ]; then
-      echo "ERR $n simulators are booted (cap $max) and none is free for you$([ -n "$want_name" ] && echo " matching '$want_name'"). Held: $(printf '%s\n' "$booted" | while IFS=$'\t' read -r u nm; do [ -n "$u" ] && printf '%s (%s): held by %s; ' "$nm" "$u" "$(holder "sim:$u")"; done)Ask the user to free one or raise the cap (disk-jockey hooks limit --simulators N)."
-      return
-    fi
-    line=$(shutdown_sims | while IFS=$'\t' read -r u nm; do
-      [ -n "$want_udid" ] && [ "$u" != "$want_udid" ] && continue
-      [ -n "$want_name" ] && case "$nm" in (*"$want_name"*) ;; (*) continue ;; esac
-      printf '%s\t%s\n' "$u" "$nm"
-    done | head -n 1)
-    [ -n "$line" ] || { echo "ERR No shut-down iOS simulator matches$([ -n "$want_name" ] && echo " '$want_name'")$([ -n "$want_udid" ] && echo " $want_udid"). Create one in Xcode or pick another name."; return; }
-    pick="${line%%$'\t'*}" pname="${line#*$'\t'}"
-    xcrun simctl boot "$pick" >/dev/null 2>&1 || { echo "ERR simctl could not boot $pname ($pick)."; return; }
-    xcrun simctl bootstatus "$pick" -b >/dev/null 2>&1
+  if [ -n "$pick" ]; then
     dev_claim "sim:$pick"
-    echo "OK Booted $pname ($pick) and recorded it as yours. Use -destination id=$pick (or simulatorId $pick). Call release_device with $pick when done."
+    dev_unlock
+    echo "OK Use $pname ($pick): already booted, now recorded as yours. Use -destination id=$pick (or simulatorId $pick). Call release_device with $pick when done."
     return
   fi
+  # Count what's booted plus what another session is booting this moment, so two boots can't pass the cap.
+  claimed=$(claimed_sims)
+  n=$({ printf '%s\n' "$booted" | cut -f1; printf '%s\n' "$claimed"; } | sed '/^$/d' | sort -u | grep -c .)
+  if [ -n "$want_udid" ] && printf '%s\n' "$booted" | cut -f1 | grep -qx "$want_udid"; then
+    dev_unlock
+    echo "BUSY $held"
+    return
+  fi
+  if [ "$max" != 0 ] && [ "$n" -ge "$max" ]; then
+    dev_unlock
+    echo "BUSY $n simulators are booted or booting (cap $max) and none is free for you$([ -n "$want_name" ] && echo " matching '$want_name'"). ${held:-}"
+    return
+  fi
+  line=$(shutdown_sims | while IFS=$'\t' read -r u nm; do
+    [ -n "$want_udid" ] && [ "$u" != "$want_udid" ] && continue
+    [ -n "$want_name" ] && case "$nm" in (*"$want_name"*) ;; (*) continue ;; esac
+    printf '%s\n' "$claimed" | grep -qx "$u" && continue
+    printf '%s\t%s\n' "$u" "$nm"
+  done | head -n 1)
+  if [ -z "$line" ]; then
+    dev_unlock
+    echo "ERR No shut-down iOS simulator matches$([ -n "$want_name" ] && echo " '$want_name'")$([ -n "$want_udid" ] && echo " $want_udid"). Create one in Xcode or pick another name."
+    return
+  fi
+  pick="${line%%$'\t'*}" pname="${line#*$'\t'}"
+  # Claimed before booting, so a concurrent acquire counts it and won't pick it.
   dev_claim "sim:$pick"
-  echo "OK Use $pname ($pick): already booted, now recorded as yours. Use -destination id=$pick (or simulatorId $pick). Call release_device with $pick when done."
+  dev_unlock
+  if ! xcrun simctl boot "$pick" >/dev/null 2>&1; then
+    dev_release "sim:$pick"
+    echo "ERR simctl could not boot $pname ($pick)."
+    return
+  fi
+  xcrun simctl bootstatus "$pick" -b >/dev/null 2>&1
+  echo "OK Booted $pname ($pick) and recorded it as yours. Use -destination id=$pick (or simulatorId $pick). Call release_device with $pick when done."
 }
 
-do_acquire_emu() {
-  local want s h
-  want=$(field serial)
+attempt_emu() {
+  local want="$1" s h held=""
+  dev_lock 15 || { echo "BUSY Another session is acquiring a device right now."; return; }
   for s in $(emulators); do
     [ -n "$want" ] && [ "$s" != "$want" ] && continue
     h=$(holder "emu:$s")
     if [ -z "$h" ] || [ "$h" = me ]; then
       dev_claim "emu:$s"
+      dev_unlock
       echo "OK Use $s (adb -s $s), recorded as yours. Call release_device with $s when done."
       return
     fi
-    [ -n "$want" ] && { echo "ERR $s is held by $h."; return; }
+    held="$held$s: held by $h; "
   done
-  echo "ERR No running emulator is free$([ -n "$want" ] && echo " ($want)"). Start one (emulator -avd NAME; the device cap applies) or ask the user."
+  dev_unlock
+  if [ -n "$held" ]; then
+    echo "BUSY No running emulator is free$([ -n "$want" ] && echo " ($want)"). $held"
+  else
+    echo "ERR No emulator is running$([ -n "$want" ] && echo " as $want"). Start one (emulator -avd NAME; the device cap applies) or ask the user."
+  fi
 }
+
+# Fail fast by default. wait_seconds (up to 300) retries every 2 seconds until something frees up.
+# Not a queue: whoever retries first after a release gets the device.
+with_wait() { # attempt-function args...
+  local w deadline r
+  w=$(num_field wait_seconds)
+  w=${w:-0}
+  [ "$w" -gt 300 ] && w=300
+  deadline=$(($(date +%s) + w))
+  while :; do
+    r=$("$@")
+    case "$r" in
+      "BUSY "*)
+        if [ "$(date +%s)" -lt "$deadline" ]; then sleep 2; continue; fi
+        if [ "$w" -gt 0 ]; then
+          echo "ERR ${r#BUSY }Still none free after waiting ${w}s. Ask the user to free one or raise the cap (disk-jockey hooks limit --simulators N)."
+        else
+          echo "ERR ${r#BUSY }Retry with wait_seconds (up to 300) to wait for one to be released, or ask the user to free one or raise the cap (disk-jockey hooks limit --simulators N)."
+        fi
+        return
+        ;;
+      *) echo "$r"; return ;;
+    esac
+  done
+}
+
+do_acquire_sim() { with_wait attempt_sim "$(field udid)" "$(field name)"; }
+do_acquire_emu() { with_wait attempt_emu "$(field serial)"; }
 
 do_release() {
   local d id o
